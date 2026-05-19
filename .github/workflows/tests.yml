@@ -22,10 +22,15 @@ env:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    # Hard cap on the whole run. Cold builds with vcpkg + 8-service docker
+    # stack come in around 25 min; 45 min leaves headroom while still
+    # protecting against runaway hangs.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        timeout-minutes: 5
         with:
           submodules: recursive
 
@@ -33,12 +38,14 @@ jobs:
       # publish/read from it.
       - name: Export GitHub Actions cache env
         uses: actions/github-script@v7
+        timeout-minutes: 2
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Install system dependencies
+        timeout-minutes: 5
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -53,6 +60,7 @@ jobs:
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
+        timeout-minutes: 10
         with:
           # Pin to the same baseline as vcpkg.json's builtin-baseline.
           vcpkgGitCommitId: "77df67cfff9c12ccfdb52284e07c87c75092f723"
@@ -61,6 +69,7 @@ jobs:
       # binary cache this saves a few minutes on cold runs.
       - name: Cache vcpkg installed
         uses: actions/cache@v4
+        timeout-minutes: 5
         with:
           path: build/vcpkg_installed
           key: vcpkg-installed-libdearsql-linux-${{ hashFiles('vcpkg.json') }}-v1
@@ -72,24 +81,29 @@ jobs:
       # containers (Oracle, Cassandra) have a head start.
       - name: Start docker test stack
         working-directory: docker
+        timeout-minutes: 10
         run: |
-          docker compose pull --quiet
-          docker compose up -d
+          # Per-call timeouts so a stuck registry can't burn the whole step
+          timeout 480 docker compose pull --quiet
+          timeout 120 docker compose up -d
           docker compose ps
 
       - name: Configure
-        run: |
-          cmake -S . -B build -G Ninja
+        timeout-minutes: 10
+        run: cmake -S . -B build -G Ninja
 
       - name: Build
+        timeout-minutes: 20
         run: cmake --build build -j
 
       - name: Wait for docker services to be healthy
         working-directory: docker
+        # The internal loop already caps at 96 × 5s = 8 min, but a step-level
+        # cap protects against `docker compose ps` itself stalling.
+        timeout-minutes: 10
         run: |
-          # Poll up to 8 min — Oracle Free cold start is the bottleneck.
           for i in $(seq 1 96); do
-            unhealthy=$(docker compose ps --format '{{.Name}}\t{{.Health}}' \
+            unhealthy=$(timeout 30 docker compose ps --format '{{.Name}}\t{{.Health}}' \
               | awk -F'\t' '$2 != "healthy" && $2 != "" {print $1}' \
               | paste -sd,)
             if [ -z "$unhealthy" ]; then
@@ -105,6 +119,9 @@ jobs:
           exit 1
 
       - name: Run tests
+        # Per-test cap (ctest --timeout 120) + step cap = no single hang can
+        # eat the whole job.
+        timeout-minutes: 10
         env:
           DEARSQL_TEST_PG_HOST: 127.0.0.1
           DEARSQL_TEST_PG_PORT: "55432"
@@ -158,14 +175,16 @@ jobs:
       - name: Dump docker logs on failure
         if: failure()
         working-directory: docker
+        timeout-minutes: 3
         run: |
-          for c in $(docker compose ps --format '{{.Name}}'); do
+          for c in $(timeout 15 docker compose ps --format '{{.Name}}'); do
             echo "::group::$c"
-            docker logs --tail=200 "$c" 2>&1 || true
+            timeout 30 docker logs --tail=200 "$c" 2>&1 || true
             echo "::endgroup::"
           done
 
       - name: Tear down docker stack
         if: always()
         working-directory: docker
-        run: docker compose down -v
+        timeout-minutes: 3
+        run: timeout 120 docker compose down -v || true
