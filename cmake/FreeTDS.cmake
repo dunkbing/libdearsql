@@ -12,25 +12,21 @@ set(FREETDS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/freetds")
 set(FREETDS_INSTALL_DIR "${CMAKE_BINARY_DIR}/freetds-install")
 
 if(UNIX AND NOT APPLE)
-    # On Linux prefer the system-installed FreeTDS if available; fall back to
-    # building from submodule.
-    find_library(SYBDB_LIBRARY NAMES libsybdb.a sybdb)
-    find_path(SYBDB_INCLUDE_DIR sybdb.h)
-    if(SYBDB_LIBRARY AND SYBDB_INCLUDE_DIR)
-        find_library(GNUTLS_LIBRARY gnutls REQUIRED)
-        find_library(NETTLE_LIBRARY nettle REQUIRED)
-        find_library(HOGWEED_LIBRARY hogweed REQUIRED)
-        find_library(GMP_LIBRARY gmp REQUIRED)
-        find_library(GSSAPI_LIBRARY gssapi_krb5 REQUIRED)
-        set(SYBDB_DEPS
-            ${GNUTLS_LIBRARY}
-            ${NETTLE_LIBRARY}
-            ${HOGWEED_LIBRARY}
-            ${GMP_LIBRARY}
-            ${GSSAPI_LIBRARY}
-        )
-        return()
-    endif()
+    find_library(SYBDB_LIBRARY NAMES libsybdb.a sybdb REQUIRED)
+    find_path(SYBDB_INCLUDE_DIR sybdb.h REQUIRED)
+    find_library(GNUTLS_LIBRARY gnutls REQUIRED)
+    find_library(NETTLE_LIBRARY nettle REQUIRED)
+    find_library(HOGWEED_LIBRARY hogweed REQUIRED)
+    find_library(GMP_LIBRARY gmp REQUIRED)
+    find_library(GSSAPI_LIBRARY gssapi_krb5 REQUIRED)
+    set(SYBDB_DEPS
+        ${GNUTLS_LIBRARY}
+        ${NETTLE_LIBRARY}
+        ${HOGWEED_LIBRARY}
+        ${GMP_LIBRARY}
+        ${GSSAPI_LIBRARY}
+    )
+    return()
 endif()
 
 if(WIN32)
