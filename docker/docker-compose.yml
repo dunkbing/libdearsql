@@ -1,0 +1,133 @@
+# libdearsql integration test stack.
+#
+# Deployed to a remote host (e.g. opc@129.150.46.134) by scripts/test-remote.
+# Each service binds to 127.0.0.1 on the remote so the only way in is via the
+# SSH tunnel the script opens — credentials are weak by design (test-only).
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: dearsql-lib-postgres
+    environment:
+      POSTGRES_DB: dearsql_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redshift:
+    # Reuses Postgres image — DEARSQL_TEST_REDSHIFT_* flows through the same
+    # Postgres backend in libdearsql.
+    image: postgres:15-alpine
+    container_name: dearsql-lib-redshift
+    environment:
+      POSTGRES_DB: dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: redshift
+    ports:
+      - "127.0.0.1:55439:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    container_name: dearsql-lib-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_DATABASE: dearsql_test
+    ports:
+      - "127.0.0.1:53306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pmysql"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: dearsql-lib-redis
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7.0
+    container_name: dearsql-lib-mongodb
+    ports:
+      - "127.0.0.1:57017:27017"
+    healthcheck:
+      # printjson(...) lets `mongosh --eval` exit 0 only on ok ping
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping: 1}).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  mssql:
+    # Azure SQL Edge is the SQL-Server-compatible image that ships arm64 +
+    # amd64 manifests (mcr.microsoft.com/mssql/server is amd64-only). FreeTDS
+    # talks TDS just the same.
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: dearsql-lib-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "DearSQL_Test1!"
+    ports:
+      - "127.0.0.1:51433:1433"
+    # azure-sql-edge has no sqlcmd, no nc, and a minimal busybox-style sh.
+    # Skip the in-container healthcheck and rely on the script's port probe
+    # via the SSH tunnel.
+    restart: unless-stopped
+
+  oracle:
+    # Oracle Database Free 23ai — ships arm64 + amd64 (gvenzl/oracle-xe is
+    # amd64-only). Uses OCI just like XE; the OCI ports of libdearsql work
+    # unchanged.
+    image: container-registry.oracle.com/database/free:latest-lite
+    container_name: dearsql-lib-oracle
+    environment:
+      ORACLE_PWD: DearSQL_Test1
+    ports:
+      - "127.0.0.1:51521:1521"
+    healthcheck:
+      # Oracle Free's entrypoint marks the container healthy once the listener
+      # accepts connections (see /opt/oracle/checkDBStatus.sh)
+      test: ["CMD", "/opt/oracle/checkDBStatus.sh"]
+      interval: 15s
+      timeout: 10s
+      # Cold start of Oracle Free is ~2-3 minutes on first run.
+      retries: 40
+      start_period: 60s
+    restart: unless-stopped
+
+  cassandra:
+    image: cassandra:5
+    container_name: dearsql-lib-cassandra
+    environment:
+      HEAP_NEWSIZE: 128M
+      MAX_HEAP_SIZE: 512M
+    ports:
+      - "127.0.0.1:59042:9042"
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped

@@ -1,0 +1,171 @@
+name: Test (Linux)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "tests/**"
+      - "cmake/**"
+      - "docker/**"
+      - "CMakeLists.txt"
+      - "vcpkg.json"
+      - ".github/workflows/test-linux.yml"
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Surface the GitHub-hosted vcpkg binary cache so subsequent vcpkg builds
+      # publish/read from it.
+      - name: Export GitHub Actions cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config \
+            libtirpc-dev libltdl-dev python3-venv \
+            autoconf automake autoconf-archive \
+            libgnutls28-dev libkrb5-dev libgssapi-krb5-2 \
+            libnettle8 libhogweed6 libgmp10 \
+            netcat-openbsd jq
+          # FreeTDS comes from the external/freetds submodule; vcpkg libpq +
+          # mariadb + hiredis + mongo-cxx + openssl handle the rest.
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          # Pin to the same baseline as vcpkg.json's builtin-baseline.
+          vcpkgGitCommitId: "77df67cfff9c12ccfdb52284e07c87c75092f723"
+
+      # Cache the resolved vcpkg_installed tree as well — even with x-gha
+      # binary cache this saves a few minutes on cold runs.
+      - name: Cache vcpkg installed
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-installed-libdearsql-linux-${{ hashFiles('vcpkg.json') }}-v1
+          restore-keys: |
+            vcpkg-installed-libdearsql-linux-
+
+      # Pull and start the 8-service docker test stack in the background
+      # while CMake configures + builds. By the time `ctest` runs, the slow
+      # containers (Oracle, Cassandra) have a head start.
+      - name: Start docker test stack
+        working-directory: docker
+        run: |
+          docker compose pull --quiet
+          docker compose up -d
+          docker compose ps
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Wait for docker services to be healthy
+        working-directory: docker
+        run: |
+          # Poll up to 8 min — Oracle Free cold start is the bottleneck.
+          for i in $(seq 1 96); do
+            unhealthy=$(docker compose ps --format '{{.Name}}\t{{.Health}}' \
+              | awk -F'\t' '$2 != "healthy" && $2 != "" {print $1}' \
+              | paste -sd,)
+            if [ -z "$unhealthy" ]; then
+              echo "all services healthy"
+              docker compose ps
+              exit 0
+            fi
+            echo "[${i}/96] waiting on: $unhealthy"
+            sleep 5
+          done
+          echo "::error::timed out waiting for healthchecks"
+          docker compose ps
+          exit 1
+
+      - name: Run tests
+        env:
+          DEARSQL_TEST_PG_HOST: 127.0.0.1
+          DEARSQL_TEST_PG_PORT: "55432"
+          DEARSQL_TEST_PG_DB: dearsql_test
+          DEARSQL_TEST_PG_USER: postgres
+          DEARSQL_TEST_PG_PASSWORD: postgres
+          DEARSQL_TEST_PG_NAME: PostgresDocker
+
+          DEARSQL_TEST_REDSHIFT_HOST: 127.0.0.1
+          DEARSQL_TEST_REDSHIFT_PORT: "55439"
+          DEARSQL_TEST_REDSHIFT_DB: dev
+          DEARSQL_TEST_REDSHIFT_USER: postgres
+          DEARSQL_TEST_REDSHIFT_PASSWORD: redshift
+          DEARSQL_TEST_REDSHIFT_NAME: RedshiftDocker
+
+          DEARSQL_TEST_MYSQL_HOST: 127.0.0.1
+          DEARSQL_TEST_MYSQL_PORT: "53306"
+          DEARSQL_TEST_MYSQL_DB: dearsql_test
+          DEARSQL_TEST_MYSQL_USER: root
+          DEARSQL_TEST_MYSQL_PASSWORD: mysql
+          DEARSQL_TEST_MYSQL_NAME: MySQLDocker
+
+          DEARSQL_TEST_REDIS_HOST: 127.0.0.1
+          DEARSQL_TEST_REDIS_PORT: "56379"
+          DEARSQL_TEST_REDIS_NAME: RedisDocker
+
+          DEARSQL_TEST_MONGODB_HOST: 127.0.0.1
+          DEARSQL_TEST_MONGODB_PORT: "57017"
+          DEARSQL_TEST_MONGODB_DB: test
+          DEARSQL_TEST_MONGODB_NAME: MongoDBDocker
+
+          DEARSQL_TEST_MSSQL_HOST: 127.0.0.1
+          DEARSQL_TEST_MSSQL_PORT: "51433"
+          DEARSQL_TEST_MSSQL_DB: master
+          DEARSQL_TEST_MSSQL_USER: sa
+          DEARSQL_TEST_MSSQL_PASSWORD: "DearSQL_Test1!"
+          DEARSQL_TEST_MSSQL_NAME: MSSQLDocker
+
+          DEARSQL_TEST_ORACLE_HOST: 127.0.0.1
+          DEARSQL_TEST_ORACLE_PORT: "51521"
+          DEARSQL_TEST_ORACLE_DB: FREEPDB1
+          DEARSQL_TEST_ORACLE_USER: system
+          DEARSQL_TEST_ORACLE_PASSWORD: DearSQL_Test1
+          DEARSQL_TEST_ORACLE_NAME: OracleDocker
+
+          DEARSQL_TEST_CASSANDRA_HOST: 127.0.0.1
+          DEARSQL_TEST_CASSANDRA_PORT: "59042"
+          DEARSQL_TEST_CASSANDRA_NAME: CassandraDocker
+        run: ctest --test-dir build --output-on-failure --timeout 120
+
+      - name: Dump docker logs on failure
+        if: failure()
+        working-directory: docker
+        run: |
+          for c in $(docker compose ps --format '{{.Name}}'); do
+            echo "::group::$c"
+            docker logs --tail=200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
+
+      - name: Tear down docker stack
+        if: always()
+        working-directory: docker
+        run: docker compose down -v

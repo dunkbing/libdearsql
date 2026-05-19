@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+#
+# test-remote — spin up libdearsql's docker test stack on a remote host via
+# SSH, forward every DB port back to localhost through a single SSH tunnel,
+# then run ctest against those local ports.
+#
+# Defaults assume the host in `dearsql/docker-compose.yml` and the env var
+# layout from this lib's `tests/test_helpers.hpp`.
+#
+# Usage:
+#   scripts/test-remote up      # deploy compose + start tunnel
+#   scripts/test-remote test    # run ctest (tunnel must be up)
+#   scripts/test-remote down    # close tunnel + docker compose down
+#   scripts/test-remote all     # up → wait → test → down  (default)
+#   scripts/test-remote logs <svc>
+#   scripts/test-remote shell   # exec into one of the containers
+#
+# Environment overrides:
+#   DEARSQL_REMOTE_HOST      ssh target (default: opc@129.150.46.134)
+#   DEARSQL_REMOTE_DIR       work dir on remote (default: ~/dearsql-libtest)
+#   *_PORT                   per-backend local/remote host port (see below)
+#   BUILD_DIR                cmake build dir (default: $repo/build)
+#   SKIP_ORACLE / SKIP_MSSQL / SKIP_CASSANDRA   = 1 to omit slow backends
+#
+set -euo pipefail
+
+REMOTE_HOST="${DEARSQL_REMOTE_HOST:-opc@129.150.46.134}"
+REMOTE_DIR="${DEARSQL_REMOTE_DIR:-/home/opc/dearsql-libtest}"
+
+POSTGRES_PORT="${POSTGRES_PORT:-55432}"
+REDSHIFT_PORT="${REDSHIFT_PORT:-55439}"
+MYSQL_PORT="${MYSQL_PORT:-53306}"
+REDIS_PORT="${REDIS_PORT:-56379}"
+MONGODB_PORT="${MONGODB_PORT:-57017}"
+MSSQL_PORT="${MSSQL_PORT:-51433}"
+ORACLE_PORT="${ORACLE_PORT:-51521}"
+CASSANDRA_PORT="${CASSANDRA_PORT:-59042}"
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
+COMPOSE_FILE="$ROOT_DIR/docker/docker-compose.yml"
+TUNNEL_PID_FILE="${TMPDIR:-/tmp}/dearsql-libtest-tunnel.pid"
+
+# ── helpers ───────────────────────────────────────────────────────────
+
+remote() {
+    ssh -o BatchMode=yes "$REMOTE_HOST" "$@"
+}
+
+# Some hosts require sudo for docker. Detect once and cache.
+DOCKER_PREFIX=""
+detect_docker_prefix() {
+    if [[ -n "${DOCKER_PREFIX_DETECTED:-}" ]]; then return; fi
+    if remote 'docker ps' >/dev/null 2>&1; then
+        DOCKER_PREFIX=""
+    elif remote 'sudo -n docker ps' >/dev/null 2>&1; then
+        DOCKER_PREFIX="sudo "
+    else
+        err "remote docker not usable (neither plain nor sudo). Add opc to the docker group or grant passwordless sudo."
+        exit 1
+    fi
+    DOCKER_PREFIX_DETECTED=1
+}
+
+remote_compose() {
+    detect_docker_prefix
+    remote "cd $REMOTE_DIR && ${DOCKER_PREFIX}docker compose $*"
+}
+
+log() {
+    printf "\033[36m>>\033[0m %s\n" "$*" >&2
+}
+
+err() {
+    printf "\033[31m!!\033[0m %s\n" "$*" >&2
+}
+
+wait_for_port() {
+    local port="$1" name="$2" timeout="${3:-60}"
+    for ((i = 0; i < timeout; i += 2)); do
+        if (echo > "/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1; then
+            log "$name: local port $port reachable"
+            return 0
+        fi
+        sleep 2
+    done
+    err "$name: timed out waiting for local port $port"
+    return 1
+}
+
+# ── lifecycle ─────────────────────────────────────────────────────────
+
+up() {
+    log "deploying compose to $REMOTE_HOST:$REMOTE_DIR"
+    remote "mkdir -p $REMOTE_DIR"
+    scp -q "$COMPOSE_FILE" "$REMOTE_HOST:$REMOTE_DIR/docker-compose.yml"
+
+    detect_docker_prefix
+    # Pull first with live progress — on a cold remote box this is several GB
+    # (Oracle Free ~1.5GB, MSSQL Edge ~600MB, Cassandra ~500MB) and dominates
+    # total wall time. Subsequent runs reuse the cached images.
+    log "docker compose pull (streaming; first run takes 5-15 min)"
+    ssh -t "$REMOTE_HOST" "cd $REMOTE_DIR && ${DOCKER_PREFIX}docker compose pull"
+
+    log "docker compose up -d"
+    ssh -t "$REMOTE_HOST" "cd $REMOTE_DIR && ${DOCKER_PREFIX}docker compose up -d"
+
+    log "waiting for healthchecks (Oracle is the slowest, ~2-3 min cold)"
+    # poll up to 8 minutes; healthcheck cadence is per-service
+    for ((i = 0; i < 96; i++)); do
+        # tab-separated: Name<TAB>Health
+        statuses=$(remote_compose "ps --format '{{.Name}}\t{{.Health}}'" 2>/dev/null || true)
+        if [[ -z "$statuses" ]]; then
+            sleep 5
+            continue
+        fi
+        unhealthy=()
+        while IFS=$'\t' read -r name health; do
+            [[ -z "$name" ]] && continue
+            case "$health" in
+                healthy|"") ;;  # empty means container has no healthcheck — assume ready once started
+                *)  unhealthy+=("$name($health)") ;;
+            esac
+        done <<<"$statuses"
+        if (( ${#unhealthy[@]} == 0 )); then
+            log "all services healthy"
+            break
+        fi
+        printf "   waiting on: %s\n" "${unhealthy[*]}" >&2
+        sleep 5
+    done
+
+    open_tunnel
+}
+
+open_tunnel() {
+    # tear down any previous tunnel for this script
+    if [[ -f "$TUNNEL_PID_FILE" ]]; then
+        kill "$(cat "$TUNNEL_PID_FILE")" 2>/dev/null || true
+        rm -f "$TUNNEL_PID_FILE"
+    fi
+
+    log "opening SSH tunnel to $REMOTE_HOST (ports: pg,redshift,mysql,redis,mongo,mssql,oracle,cassandra)"
+    # -f backgrounds after auth, -N skips remote command, -T disables PTY.
+    # ExitOnForwardFailure makes ssh exit non-zero if any -L can't bind.
+    ssh -fNT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+        -L "127.0.0.1:${POSTGRES_PORT}:127.0.0.1:${POSTGRES_PORT}" \
+        -L "127.0.0.1:${REDSHIFT_PORT}:127.0.0.1:${REDSHIFT_PORT}" \
+        -L "127.0.0.1:${MYSQL_PORT}:127.0.0.1:${MYSQL_PORT}" \
+        -L "127.0.0.1:${REDIS_PORT}:127.0.0.1:${REDIS_PORT}" \
+        -L "127.0.0.1:${MONGODB_PORT}:127.0.0.1:${MONGODB_PORT}" \
+        -L "127.0.0.1:${MSSQL_PORT}:127.0.0.1:${MSSQL_PORT}" \
+        -L "127.0.0.1:${ORACLE_PORT}:127.0.0.1:${ORACLE_PORT}" \
+        -L "127.0.0.1:${CASSANDRA_PORT}:127.0.0.1:${CASSANDRA_PORT}" \
+        "$REMOTE_HOST"
+
+    # capture the backgrounded ssh PID (most recent ssh process owned by us with -fNT)
+    pid=$(pgrep -fn "ssh -fNT.*${REMOTE_HOST}" || true)
+    if [[ -z "$pid" ]]; then
+        err "could not locate backgrounded ssh tunnel process"
+        return 1
+    fi
+    echo "$pid" > "$TUNNEL_PID_FILE"
+    log "tunnel pid: $pid (recorded in $TUNNEL_PID_FILE)"
+
+    wait_for_port "$POSTGRES_PORT" postgres 30 || true
+    wait_for_port "$MYSQL_PORT"   mysql    30 || true
+    wait_for_port "$REDIS_PORT"   redis    30 || true
+}
+
+down() {
+    if [[ -f "$TUNNEL_PID_FILE" ]]; then
+        log "closing SSH tunnel (pid $(cat "$TUNNEL_PID_FILE"))"
+        kill "$(cat "$TUNNEL_PID_FILE")" 2>/dev/null || true
+        rm -f "$TUNNEL_PID_FILE"
+    fi
+    log "docker compose down -v"
+    remote_compose "down -v" || true
+}
+
+# ── ctest ─────────────────────────────────────────────────────────────
+
+export_env() {
+    export DEARSQL_TEST_PG_HOST="127.0.0.1"
+    export DEARSQL_TEST_PG_PORT="$POSTGRES_PORT"
+    export DEARSQL_TEST_PG_DB="dearsql_test"
+    export DEARSQL_TEST_PG_USER="postgres"
+    export DEARSQL_TEST_PG_PASSWORD="postgres"
+    export DEARSQL_TEST_PG_NAME="PostgresDocker"
+
+    export DEARSQL_TEST_REDSHIFT_HOST="127.0.0.1"
+    export DEARSQL_TEST_REDSHIFT_PORT="$REDSHIFT_PORT"
+    export DEARSQL_TEST_REDSHIFT_DB="dev"
+    export DEARSQL_TEST_REDSHIFT_USER="postgres"
+    export DEARSQL_TEST_REDSHIFT_PASSWORD="redshift"
+    export DEARSQL_TEST_REDSHIFT_NAME="RedshiftDocker"
+
+    export DEARSQL_TEST_MYSQL_HOST="127.0.0.1"
+    export DEARSQL_TEST_MYSQL_PORT="$MYSQL_PORT"
+    export DEARSQL_TEST_MYSQL_DB="dearsql_test"
+    export DEARSQL_TEST_MYSQL_USER="root"
+    export DEARSQL_TEST_MYSQL_PASSWORD="mysql"
+    export DEARSQL_TEST_MYSQL_NAME="MySQLDocker"
+
+    export DEARSQL_TEST_REDIS_HOST="127.0.0.1"
+    export DEARSQL_TEST_REDIS_PORT="$REDIS_PORT"
+    export DEARSQL_TEST_REDIS_NAME="RedisDocker"
+
+    export DEARSQL_TEST_MONGODB_HOST="127.0.0.1"
+    export DEARSQL_TEST_MONGODB_PORT="$MONGODB_PORT"
+    export DEARSQL_TEST_MONGODB_DB="test"
+    export DEARSQL_TEST_MONGODB_NAME="MongoDBDocker"
+
+    if [[ -z "${SKIP_MSSQL:-}" ]]; then
+        export DEARSQL_TEST_MSSQL_HOST="127.0.0.1"
+        export DEARSQL_TEST_MSSQL_PORT="$MSSQL_PORT"
+        export DEARSQL_TEST_MSSQL_DB="master"
+        export DEARSQL_TEST_MSSQL_USER="sa"
+        export DEARSQL_TEST_MSSQL_PASSWORD="DearSQL_Test1!"
+        export DEARSQL_TEST_MSSQL_NAME="MSSQLDocker"
+    fi
+
+    if [[ -z "${SKIP_ORACLE:-}" ]]; then
+        export DEARSQL_TEST_ORACLE_HOST="127.0.0.1"
+        export DEARSQL_TEST_ORACLE_PORT="$ORACLE_PORT"
+        export DEARSQL_TEST_ORACLE_DB="FREEPDB1"
+        export DEARSQL_TEST_ORACLE_USER="system"
+        export DEARSQL_TEST_ORACLE_PASSWORD="DearSQL_Test1"
+        export DEARSQL_TEST_ORACLE_NAME="OracleDocker"
+    fi
+
+    if [[ -z "${SKIP_CASSANDRA:-}" ]]; then
+        export DEARSQL_TEST_CASSANDRA_HOST="127.0.0.1"
+        export DEARSQL_TEST_CASSANDRA_PORT="$CASSANDRA_PORT"
+        export DEARSQL_TEST_CASSANDRA_NAME="CassandraDocker"
+    fi
+}
+
+run_tests() {
+    if [[ ! -d "$BUILD_DIR" ]]; then
+        log "build dir missing, configuring..."
+        cmake -S "$ROOT_DIR" -B "$BUILD_DIR"
+    fi
+    log "cmake --build $BUILD_DIR"
+    cmake --build "$BUILD_DIR" -j
+
+    export_env
+    log "ctest --output-on-failure"
+    ctest --test-dir "$BUILD_DIR" --output-on-failure
+}
+
+# ── dispatcher ────────────────────────────────────────────────────────
+
+cmd="${1:-all}"
+case "$cmd" in
+    up)    up ;;
+    down)  down ;;
+    test)  run_tests ;;
+    all)
+        up
+        trap down EXIT
+        run_tests
+        ;;
+    logs)
+        shift
+        remote_compose "logs --tail=200 $*"
+        ;;
+    shell)
+        shift
+        svc="${1:-postgres}"
+        ssh -t "$REMOTE_HOST" "cd $REMOTE_DIR && docker compose exec $svc bash"
+        ;;
+    ps)
+        remote_compose "ps"
+        ;;
+    *)
+        sed -n '2,30p' "$0"
+        exit 1
+        ;;
+esac

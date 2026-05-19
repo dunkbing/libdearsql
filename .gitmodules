@@ -1,0 +1,9 @@
+[submodule "external/freetds"]
+	path = external/freetds
+	url = https://github.com/FreeTDS/freetds.git
+[submodule "external/odpi"]
+	path = external/odpi
+	url = https://github.com/oracle/odpi.git
+[submodule "external/cassandra-cpp-driver"]
+	path = external/cassandra-cpp-driver
+	url = https://github.com/datastax/cpp-driver.git

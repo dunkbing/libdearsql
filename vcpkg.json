@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "libdearsql",
+  "version": "0.1.0",
+  "description": "Synchronous, SSH-free database client library extracted from DearSQL",
+  "builtin-baseline": "77df67cfff9c12ccfdb52284e07c87c75092f723",
+  "dependencies": [
+    {
+      "name": "sqlite3",
+      "features": ["dbstat"]
+    },
+    {
+      "name": "libpq",
+      "features": ["openssl"],
+      "default-features": false
+    },
+    "openssl",
+    "libmariadb",
+    {
+      "name": "hiredis",
+      "features": ["ssl"]
+    },
+    "mongo-cxx-driver",
+    "libuv",
+    "zlib",
+    "libiconv",
+    "gtest"
+  ]
+}
