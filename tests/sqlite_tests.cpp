@@ -201,6 +201,47 @@ TEST(SQLite, RenameAndDropTable) {
     EXPECT_TRUE(schema->tables().empty());
 }
 
+TEST(SQLite, RowAndColumnMutationHelpers) {
+    auto conn = openMem();
+    auto db = conn->database();
+    ASSERT_TRUE(db);
+
+    Table t;
+    t.name = "items";
+    Column id;
+    id.name = "id";
+    id.type = "INTEGER";
+    id.isPrimaryKey = true;
+    t.columns = {id};
+    auto [created, createErr] = db->createTable(t);
+    ASSERT_TRUE(created) << createErr;
+
+    Column name;
+    name.name = "name";
+    name.type = "TEXT";
+    auto [added, addErr] = db->addColumn(t, name);
+    ASSERT_TRUE(added) << addErr;
+
+    auto [inserted, insertErr] = db->insertRow(t, {"id", "name"}, {"1", "'old'"});
+    ASSERT_TRUE(inserted) << insertErr;
+
+    auto [updated, updateErr] = db->updateRow(t, {{"name", "'new'"}}, "id = 1");
+    ASSERT_TRUE(updated) << updateErr;
+
+    auto rows = db->getTableData(t, 10, 0, "", "id ASC");
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0][1], "new");
+
+    auto [renamed, renameErr] = db->renameColumn(t, "name", "label");
+    ASSERT_TRUE(renamed) << renameErr;
+    auto cols = db->getColumnNames(t);
+    EXPECT_NE(std::find(cols.begin(), cols.end(), "label"), cols.end());
+
+    auto [deleted, deleteErr] = db->deleteRow(t, "id = 1");
+    ASSERT_TRUE(deleted) << deleteErr;
+    EXPECT_EQ(db->getRowCount(t), 0);
+}
+
 TEST(SQLite, ExecuteErrorReturnsFailure) {
     auto conn = openMem();
     auto r = conn->database()->execute("SELECT * FROM does_not_exist;");

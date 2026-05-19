@@ -3,8 +3,9 @@
 Standalone, **synchronous**, SSH-free C++ database client library extracted from
 the DearSQL app. Static library only.
 
-The library exposes a small abstraction (`IConnection` → `IDatabase` → `ISchema`)
-that maps cleanly onto every backend the app talks to. SSH tunneling is
+The library exposes a small abstraction (`IConnection` → `IDatabase`) that maps
+cleanly onto every backend the app talks to. PostgreSQL and MSSQL schemas are
+represented as child `IDatabase` handles. SSH tunneling is
 intentionally **not** part of the library — the host application is expected to
 set up any local port-forwarding and rewrite `ConnectionInfo.host/port` to point
 at the tunnel endpoint before calling `open()`.
@@ -14,19 +15,20 @@ at the tunnel endpoint before calling `open()`.
 | Backend       | API surface | Implementation       |
 | ------------- | ----------- | -------------------- |
 | SQLite        | ✅           | ✅ Full + tested     |
-| PostgreSQL    | ✅           | ⏳ Skeleton (port from app) |
-| Redshift      | ✅           | ⏳ Reuses Postgres   |
-| MySQL         | ✅           | ⏳ Skeleton          |
-| MariaDB       | ✅           | ⏳ Reuses MySQL      |
-| MongoDB       | ✅           | ⏳ Skeleton          |
-| Redis         | ✅           | ⏳ Skeleton          |
-| MSSQL         | ✅           | ⏳ Skeleton          |
-| Oracle        | ✅           | ⏳ Skeleton          |
-| Cassandra     | ✅           | ⏳ Skeleton          |
+| PostgreSQL    | ✅           | ✅ Full + tested     |
+| Redshift      | ✅           | ✅ Reuses Postgres   |
+| MySQL         | ✅           | ✅ Full + tested     |
+| MariaDB       | ✅           | ✅ Reuses MySQL      |
+| MongoDB       | ✅           | ✅ Full + tested     |
+| Redis         | ✅           | ✅ Full + tested     |
+| MSSQL         | ✅           | ✅ Full + tested     |
+| Oracle        | ✅           | ✅ Full + tested     |
+| Cassandra     | ✅           | ✅ Full + tested     |
 
-Each skeleton compiles and links; calling `open()` returns `{false, "...not
-implemented yet"}` until the body is ported from the app's corresponding
-`src/database/*.cpp`.
+The shared API covers connection lifecycle, database/schema discovery, catalog
+loading, query execution, table data paging, table/database DDL, row mutation,
+column mutation where supported by the backend, and dialect SQL generation via
+`createSQLBuilder(DatabaseType)`.
 
 ## Build
 
@@ -93,8 +95,9 @@ libdearsql/
 │   ├── dearsql.hpp              # umbrella header
 │   ├── types.hpp                # Column, Index, ForeignKey, Routine, Table
 │   ├── query_result.hpp         # StatementResult, QueryResult
+│   ├── sql_builder.hpp          # dialect quoting + SQL generation
 │   ├── connection_info.hpp      # DatabaseType, SslMode, ConnectionInfo
-│   ├── database.hpp             # IConnection, IDatabase, ISchema
+│   ├── database.hpp             # IConnection, IDatabase
 │   ├── factory.hpp              # makeConnection(info)
 │   └── backends/
 │       ├── sqlite_connection.hpp
@@ -109,28 +112,17 @@ libdearsql/
 │   ├── types.cpp
 │   ├── connection_info.cpp
 │   ├── factory.cpp
-│   ├── sqlite_connection.cpp    # fully implemented
-│   └── *_connection.cpp         # skeletons returning "not implemented"
+│   ├── sql_builder.cpp
+│   └── *_connection.cpp
 └── tests/
     ├── common_tests.cpp
     └── sqlite_tests.cpp
 ```
 
-## Porting a backend
+## Integration notes
 
-Each `src/<name>_connection.cpp` carries a `// TODO:` comment pointing at the
-files in the app source tree to copy from. The mechanical work is:
-
-1. Drop every `AsyncOperation<...>` member, every `Async` method, and the
-   `start*LoadAsync` / `check*StatusAsync` pairs — replace with direct
-   synchronous calls.
-2. Drop `ConnectionPool<T>`; hold one connection handle behind a mutex if
-   thread-safety is needed.
-3. Drop UI state (`attemptedConnection`, `lastConnectionError`,
-   `savedConnectionId`, `*expanded` booleans).
-4. Drop SSH (`sshTunnel_`, `prepareConnectionForConnect`, `stopSshTunnel`).
-5. Wrap the result behind `IConnection` / `IDatabase` / `ISchema`, mapping the
-   app's two-tier (or three-tier for Postgres/MSSQL) hierarchy onto the
-   library's interfaces.
-
-See `src/sqlite_connection.cpp` for the worked reference.
+The library is synchronous. The app should keep async orchestration, progress
+state, SSH tunneling, saved-connection metadata, and UI refresh scheduling above
+this layer. `ctest` without backend environment variables exercises only common
+and SQLite tests; use `scripts/test-remote all` or provide the `DEARSQL_TEST_*`
+variables to run the full integration suite.

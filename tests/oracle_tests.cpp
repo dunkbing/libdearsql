@@ -29,6 +29,18 @@ TEST(Oracle, OpenAndListDatabases) {
     EXPECT_FALSE(conn->databases().empty());
 }
 
+TEST(Oracle, OpenAutoDetectsServiceWhenBlank) {
+    auto c = cfg();
+    DEARSQL_SKIP_IF_NO_CONFIG(c, "DEARSQL_TEST_ORACLE_HOST");
+    c->database.clear();
+    auto [conn, st] = tryOpen(*c, DatabaseType::ORACLE);
+    DEARSQL_SKIP_IF_UNIMPLEMENTED(st);
+    ASSERT_TRUE(st.first) << st.second;
+    ASSERT_TRUE(conn->isOpen());
+    auto r = conn->database()->execute("SELECT 1 AS one FROM dual");
+    ASSERT_TRUE(r.success()) << r.errorMessage();
+}
+
 TEST(Oracle, SelectFromDual) {
     OPEN_OR_SKIP(conn, st);
     auto r = conn->database()->execute("SELECT 1 AS one FROM dual");

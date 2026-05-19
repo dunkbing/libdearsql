@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstring>
 #include <dpi.h>
+#include <filesystem>
 #include <format>
 #include <map>
 #include <memory>
@@ -769,19 +770,44 @@ public:
             return {false, err.empty() ? "Failed to initialize ODPI-C context" : err};
         }
 
-        if (info_.database.empty())
-            info_.database = "FREEPDB1";
+        try {
+            if (info_.database.empty()) {
+                for (const auto& candidate : {"FREEPDB1", "XEPDB1", "XE", "ORCL", "FREE"}) {
+                    ConnectionInfo probeInfo = info_;
+                    probeInfo.database = candidate;
+                    const auto probeStr = buildConnectString(probeInfo);
+                    dpiConn* probe = nullptr;
+                    if (dpiConn_create(ctx_, probeInfo.username.c_str(),
+                                       static_cast<uint32_t>(probeInfo.username.size()),
+                                       probeInfo.password.c_str(),
+                                       static_cast<uint32_t>(probeInfo.password.size()),
+                                       probeStr.c_str(), static_cast<uint32_t>(probeStr.size()),
+                                       nullptr, nullptr, &probe) == DPI_SUCCESS) {
+                        dpiConn_release(probe);
+                        info_.database = candidate;
+                        break;
+                    }
+                }
+                if (info_.database.empty()) {
+                    return {false,
+                            "Could not find a valid Oracle service. Try specifying the service "
+                            "name."};
+                }
+            }
 
-        std::string connStr = buildConnectString(info_);
-        dpiConn* c = nullptr;
-        if (dpiConn_create(ctx_, info_.username.c_str(),
-                           static_cast<uint32_t>(info_.username.size()), info_.password.c_str(),
-                           static_cast<uint32_t>(info_.password.size()), connStr.c_str(),
-                           static_cast<uint32_t>(connStr.size()), nullptr, nullptr,
-                           &c) != DPI_SUCCESS) {
-            return {false, "Oracle connection failed: " + dpiErrText(ctx_)};
+            std::string connStr = buildConnectString(info_);
+            dpiConn* c = nullptr;
+            if (dpiConn_create(ctx_, info_.username.c_str(),
+                               static_cast<uint32_t>(info_.username.size()), info_.password.c_str(),
+                               static_cast<uint32_t>(info_.password.size()), connStr.c_str(),
+                               static_cast<uint32_t>(connStr.size()), nullptr, nullptr,
+                               &c) != DPI_SUCCESS) {
+                return {false, "Oracle connection failed: " + dpiErrText(ctx_)};
+            }
+            conn_ = c;
+        } catch (const std::exception& e) {
+            return {false, e.what()};
         }
-        conn_ = c;
         defaultSchema_ = toUpper(info_.username);
         return {true, ""};
     }
@@ -859,19 +885,39 @@ public:
     }
 
 private:
+    static std::string oracleWalletLocation(const std::string& path) {
+        if (path.empty())
+            return {};
+
+        std::error_code ec;
+        std::filesystem::path walletPath(path);
+        if (std::filesystem::is_regular_file(walletPath, ec)) {
+            auto parent = walletPath.parent_path();
+            if (!parent.empty())
+                return parent.string();
+        }
+        return walletPath.string();
+    }
+
     static std::string buildConnectString(const ConnectionInfo& info) {
         const bool useTls = info.sslmode == SslMode::Require ||
                             info.sslmode == SslMode::VerifyCA ||
                             info.sslmode == SslMode::VerifyFull;
+        const bool needsWallet =
+            info.sslmode == SslMode::VerifyCA || info.sslmode == SslMode::VerifyFull;
         if (!useTls)
             return std::format("{}:{}/{}", info.host, info.port, info.database);
         std::string s = std::format("tcps://{}:{}/{}", info.host, info.port, info.database);
         std::vector<std::string> params;
         if (info.sslmode == SslMode::Require)
             params.emplace_back("ssl_server_dn_match=off");
-        if ((info.sslmode == SslMode::VerifyCA || info.sslmode == SslMode::VerifyFull) &&
-            !info.sslCACertPath.empty()) {
-            params.push_back(std::format("wallet_location=\"{}\"", info.sslCACertPath));
+        if (needsWallet) {
+            auto walletLocation = oracleWalletLocation(info.sslCACertPath);
+            if (walletLocation.empty()) {
+                throw std::runtime_error(
+                    "Oracle TLS verify mode requires a wallet path or wallet file location");
+            }
+            params.push_back(std::format("wallet_location=\"{}\"", walletLocation));
         }
         if (!params.empty()) {
             s += '?';

@@ -14,12 +14,31 @@ TEST(ConnectionInfo, BuildPostgresConnectionString) {
     info.sslmode = SslMode::Disable;
 
     auto s = info.buildConnectionString();
-    EXPECT_NE(s.find("host=localhost"), std::string::npos);
+    EXPECT_NE(s.find("host='localhost'"), std::string::npos);
     EXPECT_NE(s.find("port=5432"), std::string::npos);
-    EXPECT_NE(s.find("dbname=app"), std::string::npos);
-    EXPECT_NE(s.find("user=u"), std::string::npos);
-    EXPECT_NE(s.find("password=p"), std::string::npos);
+    EXPECT_NE(s.find("dbname='app'"), std::string::npos);
+    EXPECT_NE(s.find("user='u'"), std::string::npos);
+    EXPECT_NE(s.find("password='p'"), std::string::npos);
     EXPECT_NE(s.find("sslmode=disable"), std::string::npos);
+}
+
+TEST(ConnectionInfo, EscapesPostgresKeywordValues) {
+    ConnectionInfo info;
+    info.type = DatabaseType::POSTGRESQL;
+    info.host = "local host";
+    info.port = 5432;
+    info.database = "app db";
+    info.username = "u'ser";
+    info.password = R"(p\ass word)";
+    info.sslmode = SslMode::VerifyFull;
+    info.sslCACertPath = "/tmp/root cert.pem";
+
+    auto s = info.buildConnectionString();
+    EXPECT_NE(s.find("host='local host'"), std::string::npos);
+    EXPECT_NE(s.find("dbname='app db'"), std::string::npos);
+    EXPECT_NE(s.find(R"(user='u\'ser')"), std::string::npos);
+    EXPECT_NE(s.find(R"(password='p\\ass word')"), std::string::npos);
+    EXPECT_NE(s.find("sslrootcert='/tmp/root cert.pem'"), std::string::npos);
 }
 
 TEST(ConnectionInfo, BuildMongoConnectionString) {
@@ -33,6 +52,38 @@ TEST(ConnectionInfo, BuildMongoConnectionString) {
 
     auto s = info.buildConnectionString();
     EXPECT_EQ(s, "mongodb://u:p@h:27017/d");
+}
+
+TEST(ConnectionInfo, EscapesMongoCredentialsAndDatabase) {
+    ConnectionInfo info;
+    info.type = DatabaseType::MONGODB;
+    info.host = "h";
+    info.port = 27017;
+    info.username = "u@name";
+    info.password = "p/a:ss";
+    info.database = "db name";
+
+    auto s = info.buildConnectionString();
+    EXPECT_EQ(s, "mongodb://u%40name:p%2Fa%3Ass@h:27017/db%20name");
+}
+
+TEST(SQLBuilder, BuildsDialectSpecificRowAndColumnSql) {
+    Table table;
+    table.schema = "public";
+    table.name = "users";
+
+    auto pg = createSQLBuilder(DatabaseType::POSTGRESQL);
+    EXPECT_EQ(pg->qualifiedName(table), R"("public"."users")");
+    EXPECT_EQ(pg->insertRow(pg->qualifiedName(table), {"id", "name"}, {"1", "'a'"}),
+              R"(INSERT INTO "public"."users" ("id", "name") VALUES (1, 'a'))");
+
+    auto mysql = createSQLBuilder(DatabaseType::MYSQL);
+    EXPECT_EQ(mysql->quoteIdentifier("we`ird"), "`we``ird`");
+
+    auto mssql = createSQLBuilder(DatabaseType::MSSQL);
+    EXPECT_EQ(mssql->selectAll(table, "", "", 10, 20),
+              "SELECT * FROM [public].[users] ORDER BY (SELECT NULL) OFFSET 20 ROWS FETCH NEXT "
+              "10 ROWS ONLY");
 }
 
 TEST(ConnectionInfo, BuildSqliteConnectionString) {

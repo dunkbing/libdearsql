@@ -2,6 +2,7 @@
 
 #include "connection_info.hpp"
 #include "query_result.hpp"
+#include "sql_builder.hpp"
 #include "types.hpp"
 #include <memory>
 #include <string>
@@ -130,6 +131,71 @@ public:
     }
     virtual Status dropColumn(const std::string& tableName, const std::string& columnName) {
         return {false, "dropColumn not supported for this database"};
+    }
+    virtual Status addColumn(const Table& table, const Column& column) {
+        if (type() == DatabaseType::MONGODB || type() == DatabaseType::REDIS)
+            return {false, "addColumn not supported for this database"};
+        auto builder = createSQLBuilder(type());
+        const auto sql = builder->addColumn(builder->qualifiedName(table), column);
+        if (sql.empty())
+            return {false, "addColumn not supported for this database"};
+        auto r = execute(sql, 0);
+        return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
+    }
+    virtual Status renameColumn(const Table& table, const std::string& oldColumnName,
+                                const std::string& newColumnName) {
+        if (type() == DatabaseType::MONGODB || type() == DatabaseType::REDIS)
+            return {false, "renameColumn not supported for this database"};
+        auto builder = createSQLBuilder(type());
+        const auto sql =
+            builder->renameColumn(builder->qualifiedName(table), oldColumnName, newColumnName);
+        if (sql.empty())
+            return {false, "renameColumn not supported for this database"};
+        auto r = execute(sql, 0);
+        return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
+    }
+    virtual Status alterColumn(const Table& table, const std::string& oldColumnName,
+                               const Column& newColumn) {
+        if (type() == DatabaseType::MONGODB || type() == DatabaseType::REDIS)
+            return {false, "alterColumn not supported for this database"};
+        auto builder = createSQLBuilder(type());
+        const auto sql =
+            builder->alterColumn(builder->qualifiedName(table), oldColumnName, newColumn);
+        if (sql.empty())
+            return {false, "alterColumn not supported for this database"};
+        auto r = execute(sql, 0);
+        return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
+    }
+    virtual Status insertRow(const Table& table, const std::vector<std::string>& columnNames,
+                             const std::vector<std::string>& valueLiterals) {
+        if (type() == DatabaseType::MONGODB || type() == DatabaseType::REDIS)
+            return {false, "insertRow not supported for this database"};
+        auto builder = createSQLBuilder(type());
+        auto r = execute(builder->insertRow(builder->qualifiedName(table), columnNames,
+                                            valueLiterals),
+                         0);
+        return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
+    }
+    virtual Status updateRow(
+        const Table& table, const std::vector<std::pair<std::string, std::string>>& assignments,
+        const std::string& whereExpr) {
+        if (type() == DatabaseType::MONGODB || type() == DatabaseType::REDIS)
+            return {false, "updateRow not supported for this database"};
+        if (whereExpr.empty())
+            return {false, "updateRow requires a WHERE expression"};
+        auto builder = createSQLBuilder(type());
+        auto r = execute(builder->updateRow(builder->qualifiedName(table), assignments, whereExpr),
+                         0);
+        return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
+    }
+    virtual Status deleteRow(const Table& table, const std::string& whereExpr) {
+        if (type() == DatabaseType::MONGODB || type() == DatabaseType::REDIS)
+            return {false, "deleteRow not supported for this database"};
+        if (whereExpr.empty())
+            return {false, "deleteRow requires a WHERE expression"};
+        auto builder = createSQLBuilder(type());
+        auto r = execute(builder->deleteRow(builder->qualifiedName(table), whereExpr), 0);
+        return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
     }
     virtual Status dropView(const std::string& viewName, bool isMaterialized = false) {
         return {false, "dropView not supported for this database"};

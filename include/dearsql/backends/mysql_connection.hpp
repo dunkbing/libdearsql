@@ -4,8 +4,7 @@
 
 namespace dearsql {
 
-// MySQL / MariaDB backend. Skeleton — open() returns "not implemented" until
-// the body is ported from the app's MySQLDatabase.
+// MySQL / MariaDB backend.
 class MySQLConnection final : public IConnection {
 public:
     explicit MySQLConnection(const ConnectionInfo& info);

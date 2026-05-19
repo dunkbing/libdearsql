@@ -72,6 +72,7 @@ include(cmake/CassandraDriver.cmake)
 add_library(dearsql STATIC
     src/types.cpp
     src/connection_info.cpp
+    src/sql_builder.cpp
     src/factory.cpp
     src/sqlite_connection.cpp
     src/postgres_connection.cpp

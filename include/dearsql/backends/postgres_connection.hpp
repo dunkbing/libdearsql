@@ -4,8 +4,7 @@
 
 namespace dearsql {
 
-// PostgreSQL / Redshift backend. Currently a skeleton — open() returns a
-// "not implemented" error until the body is ported from the app's PostgresDatabase.
+// PostgreSQL / Redshift backend.
 class PostgresConnection final : public IConnection {
 public:
     explicit PostgresConnection(const ConnectionInfo& info);

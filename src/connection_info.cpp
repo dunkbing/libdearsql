@@ -1,6 +1,42 @@
 #include "dearsql/connection_info.hpp"
 
+#include <cctype>
+
 namespace dearsql {
+namespace {
+
+std::string escapeLibpqValue(const std::string& value) {
+    std::string escaped = "'";
+    for (char ch : value) {
+        if (ch == '\'' || ch == '\\')
+            escaped += '\\';
+        escaped += ch;
+    }
+    escaped += "'";
+    return escaped;
+}
+
+void appendLibpqKeyword(std::string& connStr, const std::string& key, const std::string& value) {
+    connStr += " " + key + "=" + escapeLibpqValue(value);
+}
+
+std::string uriEncode(const std::string& value) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size());
+    for (unsigned char ch : value) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+            out += static_cast<char>(ch);
+        } else {
+            out += '%';
+            out += hex[ch >> 4];
+            out += hex[ch & 0x0F];
+        }
+    }
+    return out;
+}
+
+} // namespace
 
 std::string sslModeToString(SslMode mode) {
     switch (mode) {
@@ -97,27 +133,27 @@ std::string ConnectionInfo::buildConnectionString(const std::string& dbName) con
 
     case DatabaseType::REDSHIFT:
     case DatabaseType::POSTGRESQL: {
-        std::string connStr = "host=" + host + " port=" + std::to_string(port);
+        std::string connStr = "host=" + escapeLibpqValue(host) + " port=" + std::to_string(port);
         connStr += " connect_timeout=10";
 
         if (!dbName.empty()) {
-            connStr += " dbname=" + dbName;
+            appendLibpqKeyword(connStr, "dbname", dbName);
         } else if (!database.empty()) {
-            connStr += " dbname=" + database;
+            appendLibpqKeyword(connStr, "dbname", database);
         } else {
-            connStr +=
-                std::string(" dbname=") + (type == DatabaseType::REDSHIFT ? "dev" : "postgres");
+            appendLibpqKeyword(connStr, "dbname",
+                               type == DatabaseType::REDSHIFT ? "dev" : "postgres");
         }
 
         if (!username.empty())
-            connStr += " user=" + username;
+            appendLibpqKeyword(connStr, "user", username);
         if (!password.empty())
-            connStr += " password=" + password;
+            appendLibpqKeyword(connStr, "password", password);
 
         connStr += " sslmode=" + sslModeToString(sslmode);
         if ((sslmode == SslMode::VerifyCA || sslmode == SslMode::VerifyFull) &&
             !sslCACertPath.empty()) {
-            connStr += " sslrootcert=" + sslCACertPath;
+            appendLibpqKeyword(connStr, "sslrootcert", sslCACertPath);
         }
         return connStr;
     }
@@ -140,23 +176,23 @@ std::string ConnectionInfo::buildConnectionString(const std::string& dbName) con
     case DatabaseType::MONGODB: {
         std::string connStr = "mongodb://";
         if (!username.empty()) {
-            connStr += username;
+            connStr += uriEncode(username);
             if (!password.empty())
-                connStr += ":" + password;
+                connStr += ":" + uriEncode(password);
             connStr += "@";
         }
         connStr += host + ":" + std::to_string(port);
         if (!dbName.empty())
-            connStr += "/" + dbName;
+            connStr += "/" + uriEncode(dbName);
         else if (!database.empty())
-            connStr += "/" + database;
+            connStr += "/" + uriEncode(database);
 
         if (sslmode == SslMode::Require || sslmode == SslMode::VerifyCA ||
             sslmode == SslMode::VerifyFull) {
             connStr += (connStr.find('?') != std::string::npos) ? "&" : "?";
             connStr += "tls=true";
             if (!sslCACertPath.empty())
-                connStr += "&tlsCAFile=" + sslCACertPath;
+                connStr += "&tlsCAFile=" + uriEncode(sslCACertPath);
             else if (sslmode == SslMode::Require)
                 connStr += "&tlsAllowInvalidCertificates=true";
         }

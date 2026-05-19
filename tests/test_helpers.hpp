@@ -49,8 +49,7 @@ inline std::optional<BackendConfig> loadConfig(const char* host_key, const char*
 }
 
 // Wraps the cfg→ConnectionInfo→makeConnection→open dance with a uniform
-// "skip if backend not implemented yet" check, so integration tests light up
-// automatically once a backend skeleton is fleshed out.
+// "skip if backend not configured" shape for optional integration tests.
 struct OpenResult {
     ConnectionPtr conn;
     Status status;
@@ -87,7 +86,7 @@ inline OpenResult tryOpen(const BackendConfig& cfg, DatabaseType type) {
 #define DEARSQL_SKIP_IF_UNIMPLEMENTED(status)                                                      \
     do {                                                                                           \
         if (!(status).first && (status).second.find("not implemented") != std::string::npos) {    \
-            GTEST_SKIP() << "backend skeleton: " << (status).second;                               \
+            GTEST_SKIP() << "backend unavailable: " << (status).second;                            \
         }                                                                                          \
     } while (0)
 

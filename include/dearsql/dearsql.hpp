@@ -5,4 +5,5 @@
 #include "database.hpp"
 #include "factory.hpp"
 #include "query_result.hpp"
+#include "sql_builder.hpp"
 #include "types.hpp"
