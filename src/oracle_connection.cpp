@@ -44,12 +44,35 @@ std::string& clientLibDirHolder() {
     return s;
 }
 
+bool& autoInstallAttempted() {
+    static bool attempted = false;
+    return attempted;
+}
+
 dpiContext* getDpiContext() {
     std::lock_guard lock(ctxMutex());
     auto& ctx = ctxHandle();
     if (ctx)
         return ctx;
     dpiContextCreateParams params{};
+
+    if (!oracle::isInstalled()) {
+        if (autoInstallAttempted()) {
+            if (ctxInitError().empty()) {
+                ctxInitError() =
+                    "Oracle Instant Client is not installed and auto-install already failed";
+            }
+            return nullptr;
+        }
+        autoInstallAttempted() = true;
+        auto [ok, err] = oracle::install();
+        if (!ok) {
+            ctxInitError() =
+                "Oracle Instant Client auto-install failed: " +
+                (err.empty() ? std::string("unknown error") : err);
+            return nullptr;
+        }
+    }
 
     if (oracle::isInstalled()) {
         clientLibDirHolder() = oracle::installDir();

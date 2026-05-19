@@ -54,7 +54,7 @@ jobs:
             autoconf automake autoconf-archive \
             freetds-dev libgnutls28-dev libkrb5-dev libgssapi-krb5-2 \
             libnettle8 libhogweed6 libgmp10 \
-            netcat-openbsd jq
+            netcat-openbsd jq unzip zstd
           # Linux uses system FreeTDS like the app; vcpkg libpq + mariadb +
           # hiredis + mongo-cxx + openssl handle the rest.
 
@@ -119,9 +119,9 @@ jobs:
           exit 1
 
       - name: Run tests
-        # Per-test cap (ctest --timeout 120) + step cap = no single hang can
-        # eat the whole job.
-        timeout-minutes: 10
+        # Per-test cap allows Oracle's first connection to auto-install Instant
+        # Client, while the step cap still prevents runaway hangs.
+        timeout-minutes: 15
         env:
           DEARSQL_TEST_PG_HOST: 127.0.0.1
           DEARSQL_TEST_PG_PORT: "55432"
@@ -170,7 +170,7 @@ jobs:
           DEARSQL_TEST_CASSANDRA_HOST: 127.0.0.1
           DEARSQL_TEST_CASSANDRA_PORT: "59042"
           DEARSQL_TEST_CASSANDRA_NAME: CassandraDocker
-        run: ctest --test-dir build --output-on-failure --timeout 120
+        run: ctest --test-dir build --output-on-failure --timeout 300
 
       - name: Dump docker logs on failure
         if: failure()
