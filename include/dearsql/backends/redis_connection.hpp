@@ -50,6 +50,7 @@ public:
 
 private:
     ConnectionInfo info_;
+    void* impl_ = nullptr;
     int selectedDb_ = 0;
 };
 

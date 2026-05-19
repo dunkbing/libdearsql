@@ -30,6 +30,7 @@ public:
 
 private:
     ConnectionInfo info_;
+    void* impl_ = nullptr; // opaque (CassandraConnImpl* once opened)
 };
 
 } // namespace dearsql

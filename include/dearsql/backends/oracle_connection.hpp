@@ -25,6 +25,7 @@ public:
 
 private:
     ConnectionInfo info_;
+    void* impl_ = nullptr;
 };
 
 } // namespace dearsql

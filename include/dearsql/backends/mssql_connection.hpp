@@ -29,6 +29,7 @@ public:
 
 private:
     ConnectionInfo info_;
+    void* impl_ = nullptr; // opaque ConnectionImpl owning DBPROCESS handles
 };
 
 } // namespace dearsql
