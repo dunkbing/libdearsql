@@ -89,14 +89,14 @@ dpiContext* getDpiContext() {
         // libclntsh by absolute path. Preload them ourselves with RTLD_GLOBAL
         // (plus libaio.so.1 whose SONAME mismatch we already fixed above) so
         // libclntsh's deps resolve from the in-memory cache.
+        //
+        // Order matters: libnnz itself DT_NEEDEDs libclntshcore.so.23.1, so
+        // libclntshcore must be in the cache before libnnz is loaded.
         std::string libaioPath = clientLibDirHolder() + "/libaio.so.1";
         (void)dlopen(libaioPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
 
-        std::string libnnzPath = clientLibDirHolder() + "/libnnz.so";
-        (void)dlopen(libnnzPath.c_str(), RTLD_LAZY | RTLD_GLOBAL);
-
-        // libclntshcore name carries the major version (e.g. libclntshcore.so.23.1)
-        // — scan the dir to avoid hardcoding the version.
+        // libclntshcore's real file carries the full version
+        // (libclntshcore.so.23.1); scan to avoid hardcoding it.
         std::error_code ec;
         for (const auto& entry :
              std::filesystem::directory_iterator(clientLibDirHolder(), ec)) {
@@ -105,6 +105,9 @@ dpiContext* getDpiContext() {
                 (void)dlopen(entry.path().c_str(), RTLD_LAZY | RTLD_GLOBAL);
             }
         }
+
+        std::string libnnzPath = clientLibDirHolder() + "/libnnz.so";
+        (void)dlopen(libnnzPath.c_str(), RTLD_LAZY | RTLD_GLOBAL);
 #endif
     }
 
