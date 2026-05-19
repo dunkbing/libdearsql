@@ -1,4 +1,9 @@
 #include "dearsql/backends/oracle_connection.hpp"
+#include "dearsql/oracle_installer.hpp"
+
+#if defined(__linux__)
+#include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -32,12 +37,31 @@ std::string& ctxInitError() {
     return s;
 }
 
+// kept alive for ODPI's lifetime so oracleClientLibDir doesn't dangle
+std::string& clientLibDirHolder() {
+    static std::string s;
+    return s;
+}
+
 dpiContext* getDpiContext() {
     std::lock_guard lock(ctxMutex());
     auto& ctx = ctxHandle();
     if (ctx)
         return ctx;
     dpiContextCreateParams params{};
+
+    if (oracle::isInstalled()) {
+        clientLibDirHolder() = oracle::installDir();
+        params.oracleClientLibDir = clientLibDirHolder().c_str();
+#if defined(__linux__)
+        // pre-load the bundled libaio.so.1 with RTLD_GLOBAL so libclntsh.so's
+        // DT_NEEDED resolves against this exact SONAME (Ubuntu 24.04 system
+        // copy has SONAME libaio.so.1t64 which libclntsh refuses)
+        std::string libaioPath = clientLibDirHolder() + "/libaio.so.1";
+        (void)dlopen(libaioPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
+#endif
+    }
+
     dpiErrorInfo errorInfo;
     if (dpiContext_createWithParams(DPI_MAJOR_VERSION, DPI_MINOR_VERSION, &params, &ctx,
                                     &errorInfo) != DPI_SUCCESS) {

@@ -62,6 +62,7 @@ find_package(hiredis CONFIG REQUIRED)
 find_package(hiredis_ssl CONFIG QUIET)
 find_package(mongocxx CONFIG REQUIRED)
 find_package(bsoncxx CONFIG REQUIRED)
+find_package(httplib CONFIG REQUIRED)
 
 include(cmake/FreeTDS.cmake)
 include(cmake/OracleOCI.cmake)
@@ -79,6 +80,7 @@ add_library(dearsql STATIC
     src/redis_connection.cpp
     src/mssql_connection.cpp
     src/oracle_connection.cpp
+    src/oracle_installer.cpp
     src/cassandra_connection.cpp
 )
 add_library(dearsql::dearsql ALIAS dearsql)
@@ -99,6 +101,7 @@ target_link_libraries(dearsql
         $<IF:$<TARGET_EXISTS:mongo::bsoncxx_static>,mongo::bsoncxx_static,mongo::bsoncxx_shared>
         odpi
         cassandra_static
+        httplib::httplib
         OpenSSL::SSL
         OpenSSL::Crypto
 )

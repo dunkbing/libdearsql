@@ -22,3 +22,8 @@ target_link_libraries(dearsql_lib_tests
 
 include(GoogleTest)
 gtest_discover_tests(dearsql_lib_tests)
+
+# convenience binary for installing Oracle Instant Client locally.
+# not a gtest — run manually: ./build/tests/dearsql_oracle_install
+add_executable(dearsql_oracle_install oracle_install_smoke.cpp)
+target_link_libraries(dearsql_oracle_install PRIVATE dearsql::dearsql)

@@ -24,6 +24,7 @@
     "libuv",
     "zlib",
     "libiconv",
+    "cpp-httplib",
     "gtest"
   ]
 }
