@@ -153,7 +153,7 @@ bool downloadLibaio(const fs::path& installDir) {
     return fs::exists(target);
 }
 
-void ensureLibaio(const fs::path& installDir) {
+void ensureLibaioImpl(const fs::path& installDir) {
     fs::path target = installDir / "libaio.so.1";
     if (fs::exists(target)) {
         if (hasCorrectLibaioSoname(target))
@@ -370,11 +370,19 @@ Status install(const ProgressCallback& onProgress) {
 
 #if defined(__linux__)
     notify(onProgress, "installing-libaio", 0, 0);
-    ensureLibaio(installPath);
+    ensureLibaioImpl(installPath);
 #endif
 
     notify(onProgress, "done", 0, 0, "Installed to " + installPath.string());
     return {true, ""};
 }
+
+#if defined(__linux__)
+void ensureLibaio(const std::string& installDir) {
+    if (installDir.empty())
+        return;
+    ensureLibaioImpl(fs::path(installDir));
+}
+#endif
 
 } // namespace dearsql::oracle

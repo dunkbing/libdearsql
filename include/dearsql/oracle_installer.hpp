@@ -47,4 +47,14 @@ using ProgressCallback = std::function<void(const Progress&)>;
 // installed (returns success without re-downloading).
 Status install(const ProgressCallback& onProgress = {});
 
+#if defined(__linux__)
+// Ensures libaio.so.1 with the correct SONAME is present in `installDir`.
+// Tries (in order): existing bundled copy, system libaio with correct
+// SONAME, then downloads the Ubuntu 22.04 libaio1 deb. No-op if a usable
+// libaio.so.1 is already in place. Idempotent; safe to call on every
+// connect to recover from a previous install that placed libclntsh.so but
+// failed to fetch libaio.
+void ensureLibaio(const std::string& installDir);
+#endif
+
 } // namespace dearsql::oracle

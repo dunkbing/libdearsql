@@ -20,6 +20,9 @@ struct BackendConfig {
 };
 
 inline const char* envOr(const char* key, const char* fallback = nullptr) {
+    if (!key) {
+        return fallback;
+    }
     const char* v = std::getenv(key);
     return (v && *v) ? v : fallback;
 }

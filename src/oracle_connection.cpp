@@ -78,11 +78,33 @@ dpiContext* getDpiContext() {
         clientLibDirHolder() = oracle::installDir();
         params.oracleClientLibDir = clientLibDirHolder().c_str();
 #if defined(__linux__)
-        // pre-load the bundled libaio.so.1 with RTLD_GLOBAL so libclntsh.so's
-        // DT_NEEDED resolves against this exact SONAME (Ubuntu 24.04 system
-        // copy has SONAME libaio.so.1t64 which libclntsh refuses)
+        // Always re-run libaio bundling on context init. A prior install() may
+        // have placed libclntsh.so but failed to fetch libaio (e.g. transient
+        // network blip); calling here lets every connect attempt recover.
+        oracle::ensureLibaio(clientLibDirHolder());
+
+        // Oracle Instant Client's libclntsh.so DT_NEEDEDs libnnz.so and
+        // libclntshcore.so.<v>, both bundled in the same dir — but libclntsh
+        // has no $ORIGIN RUNPATH, so ld.so won't find them when ODPI dlopens
+        // libclntsh by absolute path. Preload them ourselves with RTLD_GLOBAL
+        // (plus libaio.so.1 whose SONAME mismatch we already fixed above) so
+        // libclntsh's deps resolve from the in-memory cache.
         std::string libaioPath = clientLibDirHolder() + "/libaio.so.1";
         (void)dlopen(libaioPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
+
+        std::string libnnzPath = clientLibDirHolder() + "/libnnz.so";
+        (void)dlopen(libnnzPath.c_str(), RTLD_LAZY | RTLD_GLOBAL);
+
+        // libclntshcore name carries the major version (e.g. libclntshcore.so.23.1)
+        // — scan the dir to avoid hardcoding the version.
+        std::error_code ec;
+        for (const auto& entry :
+             std::filesystem::directory_iterator(clientLibDirHolder(), ec)) {
+            const auto name = entry.path().filename().string();
+            if (name.starts_with("libclntshcore.so.")) {
+                (void)dlopen(entry.path().c_str(), RTLD_LAZY | RTLD_GLOBAL);
+            }
+        }
 #endif
     }
 
