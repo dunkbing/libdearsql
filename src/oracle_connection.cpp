@@ -2,11 +2,15 @@
 #include "dearsql/oracle_installer.hpp"
 
 #if defined(__linux__)
-#include <dlfcn.h>
+#include <fstream>
+#include <unistd.h>
+#include <vector>
 #endif
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <dpi.h>
 #include <filesystem>
@@ -15,6 +19,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 
 namespace dearsql {
@@ -48,6 +53,80 @@ bool& autoInstallAttempted() {
     static bool attempted = false;
     return attempted;
 }
+
+#if defined(__linux__)
+// Returns true if LD_LIBRARY_PATH already contains `dir` as a colon-separated
+// entry.
+bool ldLibraryPathContains(const std::string& dir) {
+    const char* env = std::getenv("LD_LIBRARY_PATH");
+    if (!env || !*env)
+        return false;
+    std::string_view sv = env;
+    size_t start = 0;
+    while (start <= sv.size()) {
+        size_t end = sv.find(':', start);
+        if (end == std::string_view::npos)
+            end = sv.size();
+        if (sv.substr(start, end - start) == dir)
+            return true;
+        if (end == sv.size())
+            break;
+        start = end + 1;
+    }
+    return false;
+}
+
+// Re-exec the current binary with LD_LIBRARY_PATH=<installDir>:<existing>.
+//
+// Oracle Instant Client's libclntsh.so DT_NEEDEDs libnnz.so and
+// libclntshcore.so.<v>, both bundled in the install dir. libclntsh ships with
+// no $ORIGIN RUNPATH; libnnz ships with no DT_SONAME, so the dlopen +
+// RTLD_GLOBAL preload trick doesn't satisfy DT_NEEDED resolution either. The
+// only portable way to make ld.so find the bundled deps is via the standard
+// search path, which it caches at process start. setenv() after main() won't
+// affect that cache, so we set the env and exec(2) ourselves with the same
+// argv. Guarded by DEARSQL_ORACLE_LD_BOOTSTRAPPED to avoid loops.
+[[nodiscard]] bool reexecWithLdLibraryPath(const std::string& installDir) {
+    if (std::getenv("DEARSQL_ORACLE_LD_BOOTSTRAPPED"))
+        return false; // already attempted once; don't loop
+    setenv("DEARSQL_ORACLE_LD_BOOTSTRAPPED", "1", 1);
+
+    std::string newPath = installDir;
+    if (const char* cur = std::getenv("LD_LIBRARY_PATH"); cur && *cur) {
+        newPath += ':';
+        newPath += cur;
+    }
+    setenv("LD_LIBRARY_PATH", newPath.c_str(), 1);
+
+    // Reconstruct argv from /proc/self/cmdline (null-separated).
+    std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
+    if (!cmdline)
+        return false;
+    std::vector<std::string> args;
+    std::string acc;
+    for (char c; cmdline.get(c);) {
+        if (c == '\0') {
+            args.push_back(std::move(acc));
+            acc.clear();
+        } else {
+            acc += c;
+        }
+    }
+    if (args.empty())
+        return false;
+
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (auto& s : args)
+        argv.push_back(s.data());
+    argv.push_back(nullptr);
+
+    std::fflush(stdout);
+    std::fflush(stderr);
+    execv("/proc/self/exe", argv.data());
+    return false; // execv only returns on failure
+}
+#endif
 
 dpiContext* getDpiContext() {
     std::lock_guard lock(ctxMutex());
@@ -83,31 +162,15 @@ dpiContext* getDpiContext() {
         // network blip); calling here lets every connect attempt recover.
         oracle::ensureLibaio(clientLibDirHolder());
 
-        // Oracle Instant Client's libclntsh.so DT_NEEDEDs libnnz.so and
-        // libclntshcore.so.<v>, both bundled in the same dir — but libclntsh
-        // has no $ORIGIN RUNPATH, so ld.so won't find them when ODPI dlopens
-        // libclntsh by absolute path. Preload them ourselves with RTLD_GLOBAL
-        // (plus libaio.so.1 whose SONAME mismatch we already fixed above) so
-        // libclntsh's deps resolve from the in-memory cache.
-        //
-        // Order matters: libnnz itself DT_NEEDEDs libclntshcore.so.23.1, so
-        // libclntshcore must be in the cache before libnnz is loaded.
-        std::string libaioPath = clientLibDirHolder() + "/libaio.so.1";
-        (void)dlopen(libaioPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
-
-        // libclntshcore's real file carries the full version
-        // (libclntshcore.so.23.1); scan to avoid hardcoding it.
-        std::error_code ec;
-        for (const auto& entry :
-             std::filesystem::directory_iterator(clientLibDirHolder(), ec)) {
-            const auto name = entry.path().filename().string();
-            if (name.starts_with("libclntshcore.so.")) {
-                (void)dlopen(entry.path().c_str(), RTLD_LAZY | RTLD_GLOBAL);
-            }
+        // Make ld.so find the bundled Oracle libs (libnnz.so,
+        // libclntshcore.so.<v>) by ensuring the install dir is on
+        // LD_LIBRARY_PATH at process start. If it isn't, re-exec ourselves.
+        // See reexecWithLdLibraryPath() for the rationale.
+        if (!ldLibraryPathContains(clientLibDirHolder())) {
+            (void)reexecWithLdLibraryPath(clientLibDirHolder());
+            // re-exec only returns on failure; fall through and let
+            // dpiContext_createWithParams produce a meaningful error.
         }
-
-        std::string libnnzPath = clientLibDirHolder() + "/libnnz.so";
-        (void)dlopen(libnnzPath.c_str(), RTLD_LAZY | RTLD_GLOBAL);
 #endif
     }
 
