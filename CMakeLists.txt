@@ -80,7 +80,7 @@ include(cmake/OracleOCI.cmake)
 include(cmake/CassandraDriver.cmake)
 
 # ---------- Library ----------
-add_library(dearsql STATIC
+add_library(libdearsql STATIC
     src/types.cpp
     src/connection_info.cpp
     src/sql_builder.cpp
@@ -95,17 +95,19 @@ add_library(dearsql STATIC
     src/oracle_installer.cpp
     src/cassandra_connection.cpp
 )
-add_library(dearsql::dearsql ALIAS dearsql)
+add_library(dearsql::dearsql ALIAS libdearsql)
+# target named libdearsql so a host can keep an executable called dearsql
+set_target_properties(libdearsql PROPERTIES OUTPUT_NAME dearsql)
 
-target_include_directories(dearsql
+target_include_directories(libdearsql
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
-target_compile_features(dearsql PUBLIC cxx_std_20)
+target_compile_features(libdearsql PUBLIC cxx_std_20)
 
 # driver targets are PUBLIC so a host that still talks to the native client
 # libraries directly (DearSQL during its migration) gets headers + link for free
-target_link_libraries(dearsql
+target_link_libraries(libdearsql
     PUBLIC
         unofficial::sqlite3::sqlite3
         PostgreSQL::PostgreSQL
@@ -122,15 +124,15 @@ target_link_libraries(dearsql
 )
 
 if(TARGET hiredis::hiredis_ssl)
-    target_link_libraries(dearsql PUBLIC hiredis::hiredis_ssl)
+    target_link_libraries(libdearsql PUBLIC hiredis::hiredis_ssl)
 endif()
 
 # SYSTEM + AFTER so FreeTDS headers never shadow vcpkg MySQL/OpenSSL ones
 if(SYBDB_INCLUDE_DIR)
-    target_include_directories(dearsql SYSTEM AFTER PUBLIC ${SYBDB_INCLUDE_DIR})
+    target_include_directories(libdearsql SYSTEM AFTER PUBLIC ${SYBDB_INCLUDE_DIR})
 endif()
 if(SYBDB_LIBRARY)
-    target_link_libraries(dearsql PUBLIC ${SYBDB_LIBRARY} ${SYBDB_DEPS})
+    target_link_libraries(libdearsql PUBLIC ${SYBDB_LIBRARY} ${SYBDB_DEPS})
 endif()
 
 # ---------- Tests ----------
@@ -141,7 +143,7 @@ endif()
 
 # ---------- Install ----------
 include(GNUInstallDirs)
-install(TARGETS dearsql
+install(TARGETS libdearsql
     EXPORT dearsqlTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
