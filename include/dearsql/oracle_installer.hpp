@@ -45,7 +45,10 @@ using ProgressCallback = std::function<void(const Progress&)>;
 // Blocking download + extract. Returns {true, ""} on success, {false, error}
 // on failure. Several minutes on a fresh install; idempotent if already
 // installed (returns success without re-downloading).
-Status install(const ProgressCallback& onProgress = {});
+// shouldCancel is polled during the download; a cancelled install removes the
+// partial archive and returns {false, "cancelled"}.
+Status install(const ProgressCallback& onProgress = {},
+               const std::function<bool()>& shouldCancel = {});
 
 #if defined(__linux__)
 // Ensures libaio.so.1 with the correct SONAME is present in `installDir`.

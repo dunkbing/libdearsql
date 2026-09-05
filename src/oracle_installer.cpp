@@ -242,7 +242,8 @@ void notify(const ProgressCallback& cb, std::string phase, int64_t done, int64_t
 
 } // namespace
 
-Status install(const ProgressCallback& onProgress) {
+Status install(const ProgressCallback& onProgress, const std::function<bool()>& shouldCancel) {
+    auto cancelled = [&] { return shouldCancel && shouldCancel(); };
     if (std::strlen(kDownloadPath) == 0) {
         return {false, "Oracle Instant Client auto-install is not supported on this platform"};
     }
@@ -286,6 +287,8 @@ Status install(const ProgressCallback& onProgress) {
     auto res = cli.Get(
         kDownloadPath,
         [&](const char* data, size_t len) -> bool {
+            if (cancelled())
+                return false;
             outFile.write(data, static_cast<std::streamsize>(len));
             if (!outFile) {
                 writeFailed = true;
@@ -300,6 +303,11 @@ Status install(const ProgressCallback& onProgress) {
             return true;
         });
     outFile.close();
+
+    if (cancelled()) {
+        fs::remove(archivePath, ec);
+        return {false, "cancelled"};
+    }
 
     if (!res || res->status != 200) {
         std::string err =
