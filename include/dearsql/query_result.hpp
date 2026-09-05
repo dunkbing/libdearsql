@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dearsql {
@@ -24,6 +25,12 @@ struct StatementResult {
 struct QueryResult {
     std::vector<StatementResult> statements;
     double executionTimeMs = 0.0;
+
+    // informational messages (e.g. mssql PRINT / RAISERROR <= 10)
+    std::vector<std::string> messages;
+
+    // client-measured phase timings (label, ms); populated by postgres and mysql
+    std::vector<std::pair<std::string, double>> phaseTimings;
 
     [[nodiscard]] bool success() const {
         if (statements.empty())

@@ -98,6 +98,8 @@ std::string databaseTypeToString(DatabaseType type) {
         return "redshift";
     case DatabaseType::CASSANDRA:
         return "cassandra";
+    case DatabaseType::DUCKDB:
+        return "duckdb";
     }
     return "unknown";
 }
@@ -123,12 +125,15 @@ DatabaseType stringToDatabaseType(const std::string& s) {
         return DatabaseType::REDSHIFT;
     if (s == "cassandra")
         return DatabaseType::CASSANDRA;
+    if (s == "duckdb")
+        return DatabaseType::DUCKDB;
     return DatabaseType::SQLITE;
 }
 
 std::string ConnectionInfo::buildConnectionString(const std::string& dbName) const {
     switch (type) {
     case DatabaseType::SQLITE:
+    case DatabaseType::DUCKDB:
         return path;
 
     case DatabaseType::REDSHIFT:

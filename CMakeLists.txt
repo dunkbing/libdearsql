@@ -1,56 +1,66 @@
 cmake_minimum_required(VERSION 3.23)
 
-# vcpkg toolchain - must be set before project() call.
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    if(DEFINED ENV{VCPKG_ROOT})
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-            CACHE STRING "vcpkg toolchain")
-    elseif(EXISTS "$ENV{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-            CACHE STRING "vcpkg toolchain")
-    endif()
+# toolchain, triplet and platform flags only when built standalone; as a
+# subdirectory the host project owns them
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(_DEARSQL_TOP_LEVEL ON)
+else()
+    set(_DEARSQL_TOP_LEVEL OFF)
 endif()
 
-if(NOT DEFINED VCPKG_TARGET_TRIPLET)
+if(_DEARSQL_TOP_LEVEL)
+    if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+        if(DEFINED ENV{VCPKG_ROOT})
+            set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+                CACHE STRING "vcpkg toolchain")
+        elseif(EXISTS "$ENV{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+            set(CMAKE_TOOLCHAIN_FILE "$ENV{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                CACHE STRING "vcpkg toolchain")
+        endif()
+    endif()
+
+    if(NOT DEFINED VCPKG_TARGET_TRIPLET)
+        if(APPLE)
+            execute_process(COMMAND uname -m OUTPUT_VARIABLE ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if(ARCH STREQUAL "arm64")
+                set(VCPKG_TARGET_TRIPLET "arm64-osx" CACHE STRING "vcpkg triplet" FORCE)
+            else()
+                set(VCPKG_TARGET_TRIPLET "x64-osx" CACHE STRING "vcpkg triplet" FORCE)
+            endif()
+        elseif(UNIX)
+            execute_process(COMMAND uname -m OUTPUT_VARIABLE ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if(ARCH STREQUAL "x86_64")
+                set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg triplet" FORCE)
+            else()
+                set(VCPKG_TARGET_TRIPLET "arm64-linux" CACHE STRING "vcpkg triplet" FORCE)
+            endif()
+        elseif(WIN32)
+            set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "vcpkg triplet" FORCE)
+        endif()
+    endif()
+
     if(APPLE)
-        execute_process(COMMAND uname -m OUTPUT_VARIABLE ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
-        if(ARCH STREQUAL "arm64")
-            set(VCPKG_TARGET_TRIPLET "arm64-osx" CACHE STRING "vcpkg triplet" FORCE)
-        else()
-            set(VCPKG_TARGET_TRIPLET "x64-osx" CACHE STRING "vcpkg triplet" FORCE)
-        endif()
-    elseif(UNIX)
-        execute_process(COMMAND uname -m OUTPUT_VARIABLE ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
-        if(ARCH STREQUAL "x86_64")
-            set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg triplet" FORCE)
-        else()
-            set(VCPKG_TARGET_TRIPLET "arm64-linux" CACHE STRING "vcpkg triplet" FORCE)
-        endif()
-    elseif(WIN32)
-        set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "vcpkg triplet" FORCE)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version" FORCE)
     endif()
 endif()
 
-if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version" FORCE)
-endif()
-
-option(DEARSQL_LIB_BUILD_TESTS "Build libdearsql tests" ON)
+option(DEARSQL_LIB_BUILD_TESTS "Build libdearsql tests" ${_DEARSQL_TOP_LEVEL})
 
 project(libdearsql CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(APPLE)
-    add_compile_options(-fexperimental-library)
-    add_link_options(-fexperimental-library)
-endif()
-
-if(WIN32)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY
-        "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+if(_DEARSQL_TOP_LEVEL)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    if(APPLE)
+        add_compile_options(-fexperimental-library)
+        add_link_options(-fexperimental-library)
+    endif()
+    if(WIN32)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+    endif()
 endif()
 
 # ---------- Find dependencies ----------
@@ -64,6 +74,7 @@ find_package(mongocxx CONFIG REQUIRED)
 find_package(bsoncxx CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 
+# vendored drivers: freetds_sybdb (or system libsybdb on linux), odpi, cassandra_static
 include(cmake/FreeTDS.cmake)
 include(cmake/OracleOCI.cmake)
 include(cmake/CassandraDriver.cmake)
@@ -92,8 +103,10 @@ target_include_directories(dearsql
 )
 target_compile_features(dearsql PUBLIC cxx_std_20)
 
+# driver targets are PUBLIC so a host that still talks to the native client
+# libraries directly (DearSQL during its migration) gets headers + link for free
 target_link_libraries(dearsql
-    PRIVATE
+    PUBLIC
         unofficial::sqlite3::sqlite3
         PostgreSQL::PostgreSQL
         unofficial::libmariadb
@@ -102,20 +115,22 @@ target_link_libraries(dearsql
         $<IF:$<TARGET_EXISTS:mongo::bsoncxx_static>,mongo::bsoncxx_static,mongo::bsoncxx_shared>
         odpi
         cassandra_static
-        httplib::httplib
         OpenSSL::SSL
         OpenSSL::Crypto
+    PRIVATE
+        httplib::httplib
 )
 
 if(TARGET hiredis::hiredis_ssl)
-    target_link_libraries(dearsql PRIVATE hiredis::hiredis_ssl)
+    target_link_libraries(dearsql PUBLIC hiredis::hiredis_ssl)
 endif()
 
+# SYSTEM + AFTER so FreeTDS headers never shadow vcpkg MySQL/OpenSSL ones
 if(SYBDB_INCLUDE_DIR)
-    target_include_directories(dearsql SYSTEM PRIVATE ${SYBDB_INCLUDE_DIR})
+    target_include_directories(dearsql SYSTEM AFTER PUBLIC ${SYBDB_INCLUDE_DIR})
 endif()
 if(SYBDB_LIBRARY)
-    target_link_libraries(dearsql PRIVATE ${SYBDB_LIBRARY} ${SYBDB_DEPS})
+    target_link_libraries(dearsql PUBLIC ${SYBDB_LIBRARY} ${SYBDB_DEPS})
 endif()
 
 # ---------- Tests ----------

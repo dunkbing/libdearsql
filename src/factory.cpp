@@ -31,6 +31,8 @@ ConnectionPtr makeConnection(const ConnectionInfo& info) {
         return std::make_shared<OracleConnection>(info);
     case DatabaseType::CASSANDRA:
         return std::make_shared<CassandraConnection>(info);
+    case DatabaseType::DUCKDB:
+        break; // app-side backend
     }
     return nullptr;
 }

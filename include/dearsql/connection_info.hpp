@@ -14,7 +14,8 @@ enum class DatabaseType {
     MSSQL,
     ORACLE,
     REDSHIFT,
-    CASSANDRA
+    CASSANDRA,
+    DUCKDB
 };
 
 enum class SslMode { Disable, Allow, Prefer, Require, VerifyCA, VerifyFull, VerifyIdentity };

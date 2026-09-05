@@ -5,33 +5,25 @@ namespace dearsql {
 
 void buildForeignKeyLookup(Table& table) {
     table.foreignKeysByColumn.clear();
-    table.foreignKeysByColumn.reserve(table.foreignKeys.size());
-    for (const auto& fk : table.foreignKeys) {
-        if (!fk.sourceColumn.empty()) {
-            table.foreignKeysByColumn[fk.sourceColumn] = fk;
-        }
-    }
+    for (const auto& fk : table.foreignKeys)
+        table.foreignKeysByColumn[fk.sourceColumn] = fk;
 }
 
 void populateIncomingForeignKeys(std::vector<Table>& tables) {
+    std::unordered_map<std::string, Table*> lookup;
+    lookup.reserve(tables.size());
     for (auto& t : tables) {
         t.incomingForeignKeys.clear();
+        lookup[t.name] = &t;
     }
     for (const auto& src : tables) {
         for (const auto& fk : src.foreignKeys) {
-            if (fk.targetTable.empty())
+            auto it = lookup.find(fk.targetTable);
+            if (it == lookup.end())
                 continue;
-            for (auto& dst : tables) {
-                if (dst.name == fk.targetTable) {
-                    ForeignKey inc = fk;
-                    // mark which table the incoming FK originated from by
-                    // re-using the name field's prefix convention
-                    if (inc.name.empty()) {
-                        inc.name = std::format("from_{}_{}", src.name, fk.sourceColumn);
-                    }
-                    dst.incomingForeignKeys.push_back(std::move(inc));
-                }
-            }
+            ForeignKey incoming = fk;
+            incoming.targetTable = src.name; // the table referencing us
+            it->second->incomingForeignKeys.push_back(std::move(incoming));
         }
     }
 }

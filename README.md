@@ -12,18 +12,7 @@ at the tunnel endpoint before calling `open()`.
 
 ## Status
 
-| Backend       | API surface | Implementation       |
-| ------------- | ----------- | -------------------- |
-| SQLite        | ✅           | ✅ Full + tested     |
-| PostgreSQL    | ✅           | ✅ Full + tested     |
-| Redshift      | ✅           | ✅ Reuses Postgres   |
-| MySQL         | ✅           | ✅ Full + tested     |
-| MariaDB       | ✅           | ✅ Reuses MySQL      |
-| MongoDB       | ✅           | ✅ Full + tested     |
-| Redis         | ✅           | ✅ Full + tested     |
-| MSSQL         | ✅           | ✅ Full + tested     |
-| Oracle        | ✅           | ✅ Full + tested     |
-| Cassandra     | ✅           | ✅ Full + tested     |
+Every backend is implemented and covered by the integration suite: SQLite, PostgreSQL (and Redshift), MySQL (and MariaDB), MongoDB, Redis, MSSQL, Oracle, Cassandra. DuckDB has a SQL dialect in `createSQLBuilder` but no connection backend here — DearSQL keeps that one app-side.
 
 The shared API covers connection lifecycle, database/schema discovery, catalog
 loading, query execution, table data paging, table/database DDL, row mutation,
@@ -84,7 +73,7 @@ libdearsql/
 ├── CMakeLists.txt
 ├── vcpkg.json                   # manifest with per-backend features
 ├── cmake/
-│   ├── FreeTDS.cmake            # builds db-lib for MSSQL
+│   ├── FreeTDS.cmake            # builds db-lib for MSSQL (system libsybdb on linux)
 │   ├── OracleOCI.cmake          # builds ODPI-C
 │   └── CassandraDriver.cmake    # builds DataStax driver
 ├── external/                    # vendored submodules (only when needed)
@@ -97,6 +86,8 @@ libdearsql/
 │   ├── query_result.hpp         # StatementResult, QueryResult
 │   ├── sql_builder.hpp          # dialect quoting + SQL generation
 │   ├── connection_info.hpp      # DatabaseType, SslMode, ConnectionInfo
+│   ├── ddl_utils.hpp            # type inference + quoting helpers
+│   ├── oracle_installer.hpp     # downloads Oracle Instant Client
 │   ├── database.hpp             # IConnection, IDatabase
 │   ├── factory.hpp              # makeConnection(info)
 │   └── backends/
@@ -116,10 +107,13 @@ libdearsql/
 │   └── *_connection.cpp
 └── tests/
     ├── common_tests.cpp
-    └── sqlite_tests.cpp
+    ├── sqlite_tests.cpp
+    └── *_tests.cpp              # per backend, skip without DEARSQL_TEST_* env
 ```
 
 ## Integration notes
+
+[DearSQL](https://github.com/dunkbing/dearsql) consumes this repo as a git submodule: `add_subdirectory(external/libdearsql)` and link `dearsql::dearsql`. As a subdirectory the library leaves toolchain, triplet and platform flags to the host and skips its tests (`DEARSQL_LIB_BUILD_TESTS` defaults to ON only when built standalone). The vendored driver targets (`freetds_sybdb`/`SYBDB_LIBRARY`, `odpi`, `cassandra_static`) are linked PUBLIC, so a host that still calls the native client libraries gets their headers too.
 
 The library is synchronous. The app should keep async orchestration, progress
 state, SSH tunneling, saved-connection metadata, and UI refresh scheduling above

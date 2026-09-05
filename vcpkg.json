@@ -3,7 +3,7 @@
   "name": "libdearsql",
   "version": "0.1.0",
   "description": "Synchronous, SSH-free database client library extracted from DearSQL",
-  "builtin-baseline": "77df67cfff9c12ccfdb52284e07c87c75092f723",
+  "builtin-baseline": "30ef65cad98f08e7197c9a1656fbd871bcb72f2d",
   "dependencies": [
     {
       "name": "sqlite3",

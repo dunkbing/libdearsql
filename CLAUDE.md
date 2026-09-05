@@ -52,8 +52,7 @@ libdearsql/
 │   └── backends/                  — one header per backend
 ├── src/
 │   ├── types.cpp / connection_info.cpp / factory.cpp
-│   ├── sqlite_connection.cpp      — fully implemented
-│   └── *_connection.cpp           — skeletons returning "...not implemented yet"
+│   └── *_connection.cpp           — one per backend
 ├── docker/
 │   └── docker-compose.yml         — 8-service stack for integration tests
 ├── scripts/
@@ -67,11 +66,10 @@ libdearsql/
 
 ## Backend Status
 
-SQLite is fully implemented and covered by 13 in-process tests. Every other
-backend has a skeleton that returns `{false, "...not implemented yet"}` from
-`open()`. The integration tests for those backends use
-`DEARSQL_SKIP_IF_UNIMPLEMENTED` and start asserting automatically once the
-backend's body is filled in.
+All backends are implemented. DuckDB exists only as a `DatabaseType` and a
+SQL dialect (`DuckDBBuilder`); its connection backend lives in the DearSQL app.
+`QueryResult` also carries `messages` (mssql PRINT output) and `phaseTimings`
+(postgres/mysql client-side timings) because the app renders them.
 
 Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests`):
 
@@ -89,6 +87,11 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | Common        | 7     | type/helper unit tests                                 |
 
 ## Build
+
+Standalone, or as a subdirectory of DearSQL (`external/libdearsql`, linked as
+`dearsql::dearsql`). As a subdirectory the toolchain/triplet/platform flags and
+the tests are left to the host; driver targets are linked PUBLIC so the app can
+still reach `sybdb.h`, `dpi.h` and `cassandra.h` while it migrates.
 
 ```bash
 git submodule update --init --recursive  # freetds, odpi, cassandra-cpp-driver
@@ -132,8 +135,8 @@ workflow".
 
 ## Porting a Backend (the mechanical recipe)
 
-Each `src/<name>_connection.cpp` carries a `// TODO:` comment pointing at the
-DearSQL app sources to copy from. The work is mostly subtraction:
+When bringing a change over from the DearSQL app sources, the work is mostly
+subtraction:
 
 1. **Drop async**: every `AsyncOperation<...>` member, every `*Async` method,
    every `start*LoadAsync` / `check*StatusAsync` pair. Replace with direct
