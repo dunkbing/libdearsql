@@ -15,9 +15,11 @@ at the tunnel endpoint before calling `open()`.
 Every backend is implemented and covered by the integration suite: SQLite, PostgreSQL (and Redshift), MySQL (and MariaDB), MongoDB, Redis, MSSQL, Oracle, Cassandra. DuckDB has a SQL dialect in `createSQLBuilder` but no connection backend here — DearSQL keeps that one app-side.
 
 The shared API covers connection lifecycle, database/schema discovery, catalog
-loading, query execution, table data paging, table/database DDL, row mutation,
-column mutation where supported by the backend, and dialect SQL generation via
-`createSQLBuilder(DatabaseType)`.
+loading, query execution (with client-side phase timings), table data paging,
+table/database DDL, row mutation, column mutation where supported by the backend,
+and dialect SQL generation via `createSQLBuilder(DatabaseType)`. Hosts that run
+queries in parallel take extra handles from `openDatabase(name)` and cancel a
+running one with `IDatabase::cancel()`.
 
 ## Build
 

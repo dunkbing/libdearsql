@@ -15,10 +15,15 @@ lives in the app — the lib only sees the local endpoint after the app rewrites
 ## Public API (three nouns, no async)
 
 ```
-IConnection        — server-level handle. open()/close(), databases(), database(name)
+IConnection        — server-level handle. open()/close(), databases(), database(name),
+                     openDatabase(name) for a fresh uncached handle (host-side pools)
   └── IDatabase    — a database/keyspace, also serves as the Postgres/MSSQL "schema"
                      when reached via IDatabase::schemas(). Owns tables/views/etc.
+                     cancel() is a best-effort server-side kill of its running query.
 ```
+
+Backends may expose the concrete handle class for callers that need the native
+connection (DearSQL's dump code): `MySQLDatabase::handle()` returns the `MYSQL*`.
 
 No `ISchema` — Postgres/MSSQL expose schemas by returning more `IDatabase`s from
 `schemas()`. Every other backend's `schemas()` returns empty; you call

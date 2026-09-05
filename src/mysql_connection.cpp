@@ -1,4 +1,5 @@
 #include "dearsql/backends/mysql_connection.hpp"
+#include "dearsql/ddl_utils.hpp"
 
 #include <chrono>
 #include <format>
@@ -123,10 +124,22 @@ MYSQL* openMysql(const ConnectionInfo& info, const std::string& dbName) {
     return conn;
 }
 
-StatementResult extractMysqlResult(MYSQL* conn, int rowLimit) {
+using Clock = std::chrono::high_resolution_clock;
+double toMs(Clock::duration d) {
+    return std::chrono::duration<double, std::milli>(d).count();
+}
+
+// downloadMs/parseMs accumulate the store_result and row-copy time
+StatementResult extractMysqlResult(MYSQL* conn, int rowLimit, double* downloadMs = nullptr,
+                                   double* parseMs = nullptr) {
     StatementResult result;
 
+    const auto tDownload = Clock::now();
     MYSQL_RES* rawRes = mysql_store_result(conn);
+    const auto tParse = Clock::now();
+    if (downloadMs)
+        *downloadMs += toMs(tParse - tDownload);
+
     if (rawRes) {
         MysqlResPtr res(rawRes);
         unsigned int nFields = mysql_num_fields(res.get());
@@ -180,63 +193,62 @@ StatementResult extractMysqlResult(MYSQL* conn, int rowLimit) {
         }
     }
 
+    if (parseMs)
+        *parseMs += toMs(Clock::now() - tParse);
     return result;
 }
 
-// Per-database MYSQL* handle. One IDatabase, one connection, one mutex.
-class MySQLDatabase final : public IDatabase {
-public:
-    MySQLDatabase(ConnectionInfo info, std::string dbName)
-        : info_(std::move(info)), name_(std::move(dbName)) {}
-    ~MySQLDatabase() override {
-        if (conn_)
-            mysql_close(conn_);
+} // namespace
+
+// ---------- MySQLDatabase ----------
+
+MySQLDatabase::MySQLDatabase(ConnectionInfo info, std::string dbName)
+    : info_(std::move(info)), name_(std::move(dbName)) {}
+
+MySQLDatabase::~MySQLDatabase() {
+    if (conn_)
+        mysql_close(conn_);
+}
+
+void MySQLDatabase::ensureConn() {
+    if (conn_)
+        return;
+    conn_ = openMysql(info_, name_);
+}
+
+Status MySQLDatabase::open() {
+    try {
+        ensureConn();
+        return {true, ""};
+    } catch (const std::exception& e) {
+        return {false, e.what()};
     }
+}
 
-    [[nodiscard]] std::string name() const override {
-        return name_;
+bool MySQLDatabase::ping() {
+    if (!conn_)
+        return false;
+    std::lock_guard lock(mu_);
+    return mysql_ping(conn_) == 0;
+}
+
+void MySQLDatabase::cancel() {
+    // a busy MYSQL* cannot issue anything itself, so kill from a throwaway connection
+    if (!conn_)
+        return;
+    const auto threadId = mysql_thread_id(conn_);
+    try {
+        MYSQL* killer = openMysql(info_, "");
+        const std::string sql = std::format("KILL QUERY {}", threadId);
+        mysql_query(killer, sql.c_str());
+        mysql_close(killer);
+    } catch (const std::exception&) {
     }
-    [[nodiscard]] DatabaseType type() const override {
-        return info_.type;
-    }
-
-    std::vector<Table> tables() override;
-    std::vector<Table> views() override;
-    std::vector<Routine> routines() override;
-
-    Table describeTable(const std::string& tableName) override;
-    QueryResult execute(const std::string& sql, int rowLimit) override;
-
-    std::vector<std::vector<std::string>>
-    getTableData(const Table& table, int limit, int offset, const std::string& whereClause,
-                 const std::string& orderByClause) override;
-    std::vector<std::string> getColumnNames(const Table& table) override;
-    int getRowCount(const Table& table, const std::string& whereClause) override;
-
-    Status createTable(const Table& table) override;
-    Status renameTable(const std::string& oldName, const std::string& newName) override;
-    Status dropTable(const std::string& tableName) override;
-    Status truncateTable(const std::string& tableName) override;
-    Status dropColumn(const std::string& tableName, const std::string& columnName) override;
-    Status dropView(const std::string& viewName, bool isMaterialized) override;
-
-    // Force-open the connection. Throws on failure.
-    void ensureConn() {
-        if (conn_)
-            return;
-        conn_ = openMysql(info_, name_);
-    }
-
-private:
-    ConnectionInfo info_;
-    std::string name_;
-    MYSQL* conn_ = nullptr;
-    std::mutex mu_;
-};
+}
 
 QueryResult MySQLDatabase::execute(const std::string& sql, int rowLimit) {
     QueryResult result;
-    const auto startTime = std::chrono::high_resolution_clock::now();
+    const auto startTime = Clock::now();
 
     try {
         ensureConn();
@@ -249,22 +261,47 @@ QueryResult MySQLDatabase::execute(const std::string& sql, int rowLimit) {
     }
 
     std::lock_guard lock(mu_);
-    if (mysql_query(conn_, sql.c_str()) != 0) {
+    mysql_ping(conn_); // round trip ≈ network latency
+    const auto tPing = Clock::now();
+
+    // real_query takes a length: sql may be a megabyte-sized batch
+    if (mysql_real_query(conn_, sql.c_str(), sql.size()) != 0) {
         StatementResult r;
         r.success = false;
         r.errorMessage = mysql_error(conn_);
         result.statements.push_back(std::move(r));
+        result.executionTimeMs = toMs(Clock::now() - startTime);
         return result;
     }
+    const auto tExec = Clock::now();
 
+    double downloadMs = 0.0;
+    double parseMs = 0.0;
+    // mysql_next_result returns 0 for another result, -1 when there are no more,
+    // and >0 for an error. Only real_query reports a failure in the first
+    // statement of a batch; a later one arrives here, so stopping on >0 without
+    // recording it would report a partial batch as applied.
+    int next = 0;
     do {
-        auto r = extractMysqlResult(conn_, rowLimit);
+        auto r = extractMysqlResult(conn_, rowLimit, &downloadMs, &parseMs);
         if (r.success || !r.errorMessage.empty())
             result.statements.push_back(std::move(r));
-    } while (mysql_next_result(conn_) == 0);
+        next = mysql_next_result(conn_);
+    } while (next == 0);
+    if (next > 0) {
+        StatementResult r;
+        r.success = false;
+        r.errorMessage = mysql_error(conn_);
+        result.statements.push_back(std::move(r));
+    }
 
-    const auto endTime = std::chrono::high_resolution_clock::now();
-    result.executionTimeMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
+    // coarse client-side split; execution includes one-way latency, rows
+    // arrive during mysql_store_result (data download)
+    result.phaseTimings = {{"network latency", toMs(tPing - startTime)},
+                           {"execution", toMs(tExec - tPing)},
+                           {"data download", downloadMs},
+                           {"data parse", parseMs}};
+    result.executionTimeMs = toMs(Clock::now() - startTime);
     return result;
 }
 
@@ -722,22 +759,23 @@ Status MySQLDatabase::dropView(const std::string& viewName, bool /*isMaterialize
     return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
 }
 
+namespace {
+
 // Top-level connection. Caches one MySQLDatabase per database name.
 class ConnectionImpl {
 public:
-    explicit ConnectionImpl(ConnectionInfo info) : info_(std::move(info)) {
-        if (info_.database.empty())
-            info_.database = "mysql";
-    }
+    // an empty database is kept empty: no default schema, so users without
+    // grants on `mysql` can still connect
+    explicit ConnectionImpl(ConnectionInfo info) : info_(std::move(info)) {}
 
     Status open() {
         try {
             auto db = std::dynamic_pointer_cast<MySQLDatabase>(database(info_.database));
             if (!db)
                 return {false, "could not create default database handle"};
-            db->ensureConn();
-            open_ = true;
-            return {true, ""};
+            auto st = db->open();
+            open_ = st.first;
+            return st;
         } catch (const std::exception& e) {
             open_ = false;
             return {false, e.what()};
@@ -767,7 +805,8 @@ public:
             if (row.empty())
                 continue;
             const std::string& n = row[0];
-            if (n == "information_schema" || n == "performance_schema" || n == "sys")
+            if (n == "information_schema" || n == "performance_schema" || n == "mysql" ||
+                n == "sys")
                 continue;
             out.push_back(database(n));
         }
@@ -784,12 +823,20 @@ public:
         return db;
     }
 
+    DatabasePtr openDatabase(const std::string& name) {
+        return std::make_shared<MySQLDatabase>(info_, name.empty() ? info_.database : name);
+    }
+
     Status createDatabase(const CreateDatabaseOptions& opts) {
         auto def = std::dynamic_pointer_cast<MySQLDatabase>(database(info_.database));
         if (!def)
             return {false, "no default connection"};
         if (opts.name.empty())
             return {false, "Database name cannot be empty"};
+        if (!opts.charset.empty() && !ddl_utils::isSafeSqlToken(opts.charset))
+            return {false, "Invalid charset value"};
+        if (!opts.collation.empty() && !ddl_utils::isSafeSqlToken(opts.collation))
+            return {false, "Invalid collation value"};
         std::string sql = "CREATE DATABASE " + quoteIdent(opts.name);
         if (!opts.charset.empty())
             sql += " CHARACTER SET " + opts.charset;
@@ -800,16 +847,15 @@ public:
     }
 
     Status dropDatabase(const std::string& name) {
-        // If dropping the currently-connected database, route the DROP through
-        // a temp `mysql` system connection so we don't yank the rug under the
-        // open handle. Otherwise reuse the default handle.
+        // dropping the connected database goes through a temp connection with
+        // no default schema, so the open handle is not pulled from under us
         const bool isDroppingConnectedDb = (name == info_.database);
         cache_.erase(name);
 
         if (isDroppingConnectedDb) {
             MYSQL* tempConn = nullptr;
             try {
-                tempConn = openMysql(info_, "mysql");
+                tempConn = openMysql(info_, "");
             } catch (const std::exception& e) {
                 return {false, std::format("Failed to connect to system database: {}", e.what())};
             }
@@ -820,7 +866,7 @@ public:
                 return {false, err};
             }
             mysql_close(tempConn);
-            info_.database = "mysql";
+            info_.database = ""; // no default schema from here on
             return {true, ""};
         }
 
@@ -841,7 +887,6 @@ private:
     bool open_ = false;
     std::unordered_map<std::string, std::shared_ptr<MySQLDatabase>> cache_;
 };
-
 } // namespace
 
 MySQLConnection::MySQLConnection(const ConnectionInfo& info) : info_(info) {
@@ -864,6 +909,9 @@ std::vector<DatabasePtr> MySQLConnection::databases() {
 }
 DatabasePtr MySQLConnection::database(const std::string& name) {
     return static_cast<ConnectionImpl*>(impl_)->database(name);
+}
+DatabasePtr MySQLConnection::openDatabase(const std::string& name) {
+    return static_cast<ConnectionImpl*>(impl_)->openDatabase(name);
 }
 Status MySQLConnection::createDatabase(const CreateDatabaseOptions& opts) {
     return static_cast<ConnectionImpl*>(impl_)->createDatabase(opts);

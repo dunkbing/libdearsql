@@ -55,6 +55,12 @@ public:
     // Get a database by name. Empty = default.
     virtual DatabasePtr database(const std::string& name = "") = 0;
 
+    // Fresh, uncached handle with its own connection, for hosts that pool
+    // per-worker connections. Backends without one fall back to database().
+    virtual DatabasePtr openDatabase(const std::string& name = "") {
+        return database(name);
+    }
+
     virtual Status createDatabase(const CreateDatabaseOptions& opts) {
         return {false, "createDatabase not supported for this database type"};
     }
@@ -109,6 +115,10 @@ public:
     virtual Table describeTable(const std::string& tableName) = 0;
 
     virtual QueryResult execute(const std::string& sql, int rowLimit = 1000) = 0;
+
+    // best-effort server-side cancel of whatever this handle is running, called
+    // from another thread (KILL QUERY, PQcancel, ...)
+    virtual void cancel() {}
 
     virtual std::vector<std::vector<std::string>>
     getTableData(const Table& table, int limit, int offset, const std::string& whereClause = "",
