@@ -30,6 +30,9 @@ public:
     }
     // round trip; false when the server dropped the session
     bool ping();
+    bool alive() override {
+        return !conn_ || ping();
+    }
     // raw libmysql handle, null until open
     [[nodiscard]] st_mysql* handle() const {
         return conn_;

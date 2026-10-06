@@ -423,25 +423,27 @@ std::string PostgreSQLBuilder::columnNames(const Table& table) const {
                        "WHERE n.nspname = '{}' AND c.relname = '{}' "
                        "AND a.attnum > 0 AND NOT a.attisdropped "
                        "ORDER BY a.attnum",
-                       schema, table.name);
+                       ddl_utils::escapeSingleQuotes(schema), ddl_utils::escapeSingleQuotes(table.name));
 }
 
 std::string MySQLBuilder::columnNames(const Table& table) const {
     // DESCRIBE returns name in column 0; schema set via connection's active database
-    return std::format("DESCRIBE `{}`", table.name);
+    return "DESCRIBE " + quoteIdentifier(table.name);
 }
 
 std::string MSSQLBuilder::columnNames(const Table& table) const {
     return std::format("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
                        "WHERE TABLE_CATALOG = DB_NAME() AND TABLE_SCHEMA = '{}' "
                        "AND TABLE_NAME = '{}' ORDER BY ORDINAL_POSITION",
-                       table.schema, table.name);
+                       ddl_utils::escapeSingleQuotes(table.schema),
+                       ddl_utils::escapeSingleQuotes(table.name));
 }
 
 std::string OracleBuilder::columnNames(const Table& table) const {
     return std::format("SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS "
                        "WHERE OWNER = '{}' AND TABLE_NAME = '{}' ORDER BY COLUMN_ID",
-                       table.schema, table.name);
+                       ddl_utils::escapeSingleQuotes(table.schema),
+                       ddl_utils::escapeSingleQuotes(table.name));
 }
 
 std::string DuckDBBuilder::addColumn(const std::string& qualifiedTable,
@@ -471,7 +473,8 @@ std::string DuckDBBuilder::columnNames(const Table& table) const {
 
 std::string SQLiteBuilder::columnNames(const Table& table) const {
     // pragma_table_info is a table-valued function; name is in result column 0
-    return std::format("SELECT name FROM pragma_table_info('{}')", table.name);
+    return std::format("SELECT name FROM pragma_table_info('{}')",
+                       ddl_utils::escapeSingleQuotes(table.name));
 }
 
 std::string PostgreSQLBuilder::addColumn(const std::string& qualifiedTable,
@@ -620,7 +623,8 @@ std::string CassandraBuilder::columnNames(const Table& table) const {
     const std::string keyspace = table.schema;
     return std::format("SELECT column_name FROM system_schema.columns "
                        "WHERE keyspace_name = '{}' AND table_name = '{}'",
-                       keyspace, table.name);
+                       ddl_utils::escapeSingleQuotes(keyspace),
+                       ddl_utils::escapeSingleQuotes(table.name));
 }
 
 std::string CassandraBuilder::selectAll(const Table& table, const std::string& whereClause,

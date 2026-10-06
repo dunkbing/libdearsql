@@ -210,6 +210,7 @@ struct RedisState {
 #endif
     int selectedDb = 0;
     int numDatabases = 16;
+    bool dbCountKnown = false; // CONFIG GET databases answered (managed services refuse it)
 
     ~RedisState() {
         cleanup();
@@ -617,13 +618,16 @@ Status RedisConnection::open() {
 
     // discover configured DB count
     st.numDatabases = 16;
+    st.dbCountKnown = false;
     {
         auto reply = wrapReply(redisCommand(st.ctx, "CONFIG GET databases"));
         if (reply && reply->type == REDIS_REPLY_ARRAY && reply->elements == 2 &&
             reply->element[1]->type == REDIS_REPLY_STRING) {
             const int n = std::atoi(reply->element[1]->str);
-            if (n > 0)
+            if (n > 0) {
                 st.numDatabases = n;
+                st.dbCountKnown = true;
+            }
         }
     }
 
@@ -852,6 +856,77 @@ bool RedisConnection::selectDatabase(int dbIndex) {
     im->state->selectedDb = dbIndex;
     selectedDb_ = dbIndex;
     return true;
+}
+
+} // namespace dearsql
+
+namespace dearsql {
+
+std::vector<RedisDbInfo> RedisConnection::databaseInfo() {
+    auto* im = asImpl(impl_);
+    std::string keyspace;
+    int count = 0;
+    bool known = false;
+    {
+        std::lock_guard<std::mutex> lock(im->state->mu);
+        if (!im->state->ctx)
+            throw Error("Not connected");
+        auto reply = wrapReply(redisCommand(im->state->ctx, "INFO keyspace"));
+        if (!reply || reply->type == REDIS_REPLY_ERROR)
+            throw Error(reply ? std::string(reply->str, reply->len) : im->state->ctx->errstr);
+        if (reply->type == REDIS_REPLY_STRING || reply->type == REDIS_REPLY_VERB)
+            keyspace.assign(reply->str, reply->len);
+        count = im->state->numDatabases;
+        known = im->state->dbCountKnown;
+    }
+
+    // lines look like "db0:keys=1,expires=0,avg_ttl=0"
+    std::map<int, RedisDbInfo> found;
+    std::istringstream stream(keyspace);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        const auto colon = line.find(':');
+        if (!line.starts_with("db") || colon == std::string::npos)
+            continue;
+        RedisDbInfo info;
+        try {
+            info.index = std::stoi(line.substr(2, colon - 2));
+        } catch (...) {
+            continue;
+        }
+        info.hasKeys = true;
+        std::istringstream kvs(line.substr(colon + 1));
+        std::string kv;
+        while (std::getline(kvs, kv, ',')) {
+            const auto eq = kv.find('=');
+            if (eq == std::string::npos)
+                continue;
+            const std::string key = kv.substr(0, eq);
+            const long long val = std::atoll(kv.c_str() + eq + 1);
+            if (key == "keys")
+                info.keys = val;
+            else if (key == "expires")
+                info.expires = val;
+            else if (key == "avg_ttl")
+                info.avgTtl = val;
+        }
+        found[info.index] = info;
+    }
+
+    // without CONFIG, show up to the highest db that has keys (or the selected one)
+    if (!known) {
+        count = selectedDb_ + 1;
+        if (!found.empty())
+            count = std::max(count, found.rbegin()->first + 1);
+    }
+    std::vector<RedisDbInfo> result(count);
+    for (int i = 0; i < count; ++i) {
+        auto it = found.find(i);
+        result[i] = it != found.end() ? it->second : RedisDbInfo{.index = i};
+    }
+    return result;
 }
 
 } // namespace dearsql

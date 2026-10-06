@@ -25,6 +25,7 @@
     "zlib",
     "libiconv",
     "cpp-httplib",
-    "gtest"
+    "gtest",
+    "duckdb"
   ]
 }

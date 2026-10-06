@@ -5,6 +5,7 @@
 #include "sql_builder.hpp"
 #include "types.hpp"
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,6 +29,11 @@ class IDatabase;
 using DatabasePtr = std::shared_ptr<IDatabase>;
 
 using Status = std::pair<bool, std::string>;
+
+// thrown by catalog and data calls; execute() reports errors in QueryResult instead
+struct Error : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 /**
  * @brief Synchronous server-level connection.
@@ -98,6 +104,16 @@ public:
         return {};
     }
 
+    // one schema of this database bound to the same connection (Postgres/MSSQL).
+    // backends override with a cheap constructor; the default lists schemas()
+    virtual DatabasePtr schema(const std::string& schemaName) {
+        for (auto& s : schemas()) {
+            if (s->name() == schemaName)
+                return s;
+        }
+        return nullptr;
+    }
+
     // Catalog listings (across all schemas, or directly for non-schema backends).
     virtual std::vector<Table> tables() = 0;
     virtual std::vector<Table> views() = 0;
@@ -116,32 +132,34 @@ public:
 
     virtual QueryResult execute(const std::string& sql, int rowLimit = 1000) = 0;
 
+    // false when the session behind this handle is gone; pools reopen it
+    virtual bool alive() {
+        return true;
+    }
+
     // best-effort server-side cancel of whatever this handle is running, called
     // from another thread (KILL QUERY, PQcancel, ...)
     virtual void cancel() {}
 
+    // schema used to qualify unqualified names in the builder defaults below;
+    // empty for backends without schemas
+    [[nodiscard]] virtual std::string schemaName() const {
+        return "";
+    }
+
+    // data access and DDL default to the dialect's SQL builder over execute();
+    // they throw dearsql::Error on failure. Mongo/Redis override them.
     virtual std::vector<std::vector<std::string>>
     getTableData(const Table& table, int limit, int offset, const std::string& whereClause = "",
-                 const std::string& orderByClause = "") = 0;
+                 const std::string& orderByClause = "");
+    virtual std::vector<std::string> getColumnNames(const Table& table);
+    virtual int getRowCount(const Table& table, const std::string& whereClause = "");
 
-    virtual std::vector<std::string> getColumnNames(const Table& table) = 0;
-    virtual int getRowCount(const Table& table, const std::string& whereClause = "") = 0;
-
-    virtual Status createTable(const Table& table) {
-        return {false, "createTable not supported for this database"};
-    }
-    virtual Status renameTable(const std::string& oldName, const std::string& newName) {
-        return {false, "renameTable not supported for this database"};
-    }
-    virtual Status dropTable(const std::string& tableName) {
-        return {false, "dropTable not supported for this database"};
-    }
-    virtual Status truncateTable(const std::string& tableName) {
-        return {false, "truncateTable not supported for this database"};
-    }
-    virtual Status dropColumn(const std::string& tableName, const std::string& columnName) {
-        return {false, "dropColumn not supported for this database"};
-    }
+    virtual Status createTable(const Table& table);
+    virtual Status renameTable(const std::string& oldName, const std::string& newName);
+    virtual Status dropTable(const std::string& tableName);
+    virtual Status truncateTable(const std::string& tableName);
+    virtual Status dropColumn(const std::string& tableName, const std::string& columnName);
     virtual Status addColumn(const Table& table, const Column& column) {
         if (type() == DatabaseType::MONGODB || type() == DatabaseType::REDIS)
             return {false, "addColumn not supported for this database"};
@@ -207,9 +225,7 @@ public:
         auto r = execute(builder->deleteRow(builder->qualifiedName(table), whereExpr), 0);
         return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
     }
-    virtual Status dropView(const std::string& viewName, bool isMaterialized = false) {
-        return {false, "dropView not supported for this database"};
-    }
+    virtual Status dropView(const std::string& viewName, bool isMaterialized = false);
     // Postgres/MSSQL only.
     virtual Status renameSchema(const std::string& newName) {
         return {false, "renameSchema not supported for this database"};

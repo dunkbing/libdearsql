@@ -22,6 +22,8 @@ enum class SslMode { Disable, Allow, Prefer, Require, VerifyCA, VerifyFull, Veri
 
 std::string sslModeToString(SslMode mode);
 SslMode stringToSslMode(const std::string& str);
+// .csv files open through DuckDB as an in-memory table
+bool isCsvPath(const std::string& path);
 std::string databaseTypeToString(DatabaseType type);
 DatabaseType stringToDatabaseType(const std::string& typeStr);
 
@@ -39,6 +41,8 @@ struct ConnectionInfo {
     bool showAllDatabases = false;
     SslMode sslmode = SslMode::Prefer;
     std::string sslCACertPath;  // CA cert / Oracle wallet path
+    // file backends open read-only; servers rely on the host refusing writes
+    bool readOnly = false;
 
     [[nodiscard]] std::string buildConnectionString(const std::string& dbName = "") const;
 };

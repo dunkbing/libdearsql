@@ -142,7 +142,8 @@ std::vector<Table> MongoDBDatabase::tables() {
             t.indexes = getCollectionIndexes(client, collName);
             result.push_back(std::move(t));
         }
-    } catch (...) {
+    } catch (const std::exception& e) {
+        throw Error(e.what());
     }
     return result;
 }
@@ -157,7 +158,8 @@ Table MongoDBDatabase::describeTable(const std::string& tableName) {
         auto client = pool_->acquire();
         t.columns = inferSchemaFromSample(client, tableName, 100);
         t.indexes = getCollectionIndexes(client, tableName);
-    } catch (...) {
+    } catch (const std::exception& e) {
+        throw Error(e.what());
     }
     return t;
 }
@@ -479,7 +481,8 @@ MongoDBDatabase::getTableData(const Table& table, int limit, int offset,
             }
             result.push_back(std::move(row));
         }
-    } catch (...) {
+    } catch (const std::exception& e) {
+        throw Error(e.what());
     }
     return result;
 }
@@ -504,7 +507,8 @@ std::vector<std::string> MongoDBDatabase::getColumnNames(const Table& table) {
                 names.push_back(col.name);
             return names;
         }
-    } catch (...) {
+    } catch (const std::exception& e) {
+        throw Error(e.what());
     }
     return {"_id", "document"};
 }
@@ -526,7 +530,7 @@ int MongoDBDatabase::getRowCount(const Table& table, const std::string& whereCla
         }
         return static_cast<int>(coll.count_documents(filterDoc));
     } catch (...) {
-        return 0;
+        throw;
     }
 }
 
@@ -611,7 +615,8 @@ public:
             auto names = client->list_database_names();
             for (const auto& n : names)
                 out.push_back(database(n));
-        } catch (...) {
+        } catch (const std::exception& e) {
+            throw Error(e.what());
         }
         return out;
     }

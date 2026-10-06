@@ -36,7 +36,24 @@ DatabasePtr dboSchema(ConnectionPtr conn, const std::string& dbName) {
 TEST(MSSQL, OpenAndListDatabases) {
     OPEN_OR_SKIP(conn, st);
     ASSERT_TRUE(conn->isOpen());
-    EXPECT_FALSE(conn->databases().empty());
+    // system databases are hidden, so a fresh server may list none
+    EXPECT_NO_THROW(conn->databases());
+}
+
+TEST(MSSQL, PrintMessagesCollected) {
+    OPEN_OR_SKIP(conn, st);
+    auto r = conn->database()->execute("PRINT 'hello'; SELECT 1 AS one");
+    ASSERT_TRUE(r.success()) << r.errorMessage();
+    ASSERT_EQ(r.messages.size(), 1u);
+    EXPECT_EQ(r.messages[0], "hello");
+}
+
+TEST(MSSQL, RowLimitMessage) {
+    OPEN_OR_SKIP(conn, st);
+    auto r = conn->database()->execute("SELECT 1 UNION ALL SELECT 2", 1);
+    ASSERT_TRUE(r.success()) << r.errorMessage();
+    EXPECT_EQ(r[0].tableData.size(), 1u);
+    EXPECT_NE(r[0].message.find("(limited to 1)"), std::string::npos);
 }
 
 TEST(MSSQL, ExecuteSelect) {

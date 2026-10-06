@@ -6,8 +6,8 @@ struct sqlite3;
 
 namespace dearsql {
 
-// SQLite combines connection + database + schema in one object. The
-// connection owns the sqlite3* and serves as the only database (file).
+// SQLite combines connection + database in one file. database() is the shared
+// handle; openDatabase() opens an independent one for a host's worker pool.
 class SQLiteConnection final : public IConnection {
 public:
     explicit SQLiteConnection(const ConnectionInfo& info);
@@ -29,15 +29,14 @@ public:
 
     std::vector<DatabasePtr> databases() override;
     DatabasePtr database(const std::string& name = "") override;
+    DatabasePtr openDatabase(const std::string& name = "") override;
 
-    // raw handle for advanced use; returns nullptr if not open.
-    [[nodiscard]] sqlite3* handle() const {
-        return db_;
-    }
+    // raw handle of the shared database(); nullptr if not open
+    [[nodiscard]] sqlite3* handle() const;
 
 private:
     ConnectionInfo info_;
-    sqlite3* db_ = nullptr;
+    std::shared_ptr<void> handle_;
     DatabasePtr defaultDb_;
 };
 

@@ -1,14 +1,16 @@
 # libdearsql — Agent Guide
 
-> Synchronous, SSH-free C++ database client library extracted from DearSQL.
+> Synchronous, SSH-free C++ database client library. DearSQL does all its database work through it.
 > Static library, vcpkg-managed deps, GoogleTest-based suite.
 
 ## Project Overview
 
 `libdearsql` is a C++20 static library that exposes a uniform synchronous API
-over SQLite, PostgreSQL/Redshift, MySQL/MariaDB, MongoDB, Redis, MSSQL,
-Oracle, and Cassandra. It was extracted from the DearSQL desktop app's
-database layer; the app stays the host, the lib stays headless. SSH tunneling
+over SQLite, DuckDB (and CSV), PostgreSQL/Redshift, MySQL/MariaDB, MongoDB, Redis,
+MSSQL, Oracle, and Cassandra. Every SQL string and driver call of the DearSQL
+app lives here; the app (and its terminal client / MCP server) is the host and
+adds only tunnels, threads, pools and UI state. New database behaviour is
+implemented here first. SSH tunneling
 lives in the app — the lib only sees the local endpoint after the app rewrites
 `ConnectionInfo.host/port`.
 
@@ -20,10 +22,12 @@ IConnection        — server-level handle. open()/close(), databases(), databas
   └── IDatabase    — a database/keyspace, also serves as the Postgres/MSSQL "schema"
                      when reached via IDatabase::schemas(). Owns tables/views/etc.
                      cancel() is a best-effort server-side kill of its running query.
+                     alive() for pool validation; schema(name) = cheap schema view on
+                     the same connection; schemaName() qualifies the builder defaults.
 ```
 
 Backends may expose the concrete handle class for callers that need the native
-connection (DearSQL's dump code): `MySQLDatabase::handle()` returns the `MYSQL*`.
+connection: `MySQLDatabase::handle()` (`MYSQL*`, DearSQL's dump code), `PostgresDatabase::handle()` (`PGconn*`), `SQLiteConnection::handle()`.
 
 No `ISchema` — Postgres/MSSQL expose schemas by returning more `IDatabase`s from
 `schemas()`. Every other backend's `schemas()` returns empty; you call
@@ -71,8 +75,10 @@ libdearsql/
 
 ## Backend Status
 
-All backends are implemented. DuckDB exists only as a `DatabaseType` and a
-SQL dialect (`DuckDBBuilder`); its connection backend lives in the DearSQL app.
+All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built
+when CMake finds DuckDB; `.csv` paths open as an in-memory table). Every server
+backend has `openDatabase()`, `cancel()` and `alive()`; Postgres/MSSQL have a cheap
+`schema(name)`. See README "Contract" for the error and sentinel rules.
 `QueryResult` also carries `messages` (mssql PRINT output) and `phaseTimings`
 (postgres/mysql client-side timings) because the app renders them.
 
@@ -80,7 +86,8 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 
 | Backend       | Tests | Notes                                                  |
 | ------------- | ----- | ------------------------------------------------------ |
-| SQLite        | 13    | full                                                   |
+| SQLite        | 14    | full                                                   |
+| DuckDB        | 4     | + foreign keys, csv files, parallel handles            |
 | PostgreSQL    | 16    | + schemas, sequences, routines, materialized views     |
 | MySQL         | 13    | + AUTO_INCREMENT detect, routines                      |
 | MSSQL         | 10    | + dbo schema, OFFSET/FETCH paging                      |
@@ -138,29 +145,17 @@ Override the host with `DEARSQL_REMOTE_HOST=user@box ./scripts/test-remote ...`.
 vcpkg caching and the docker stack. Trigger via the **Actions** tab → "Run
 workflow".
 
-## Porting a Backend (the mechanical recipe)
+## Host Integration (DearSQL)
 
-When bringing a change over from the DearSQL app sources, the work is mostly
-subtraction:
-
-1. **Drop async**: every `AsyncOperation<...>` member, every `*Async` method,
-   every `start*LoadAsync` / `check*StatusAsync` pair. Replace with direct
-   blocking calls.
-2. **Drop pooling**: replace `ConnectionPool<T>` with a single connection
-   handle behind a `std::mutex` if thread-safety is needed.
-3. **Drop UI state**: `attemptedConnection`, `lastConnectionError`,
-   `savedConnectionId`, all `*expanded` booleans.
-4. **Drop SSH**: every reference to `sshTunnel_`,
-   `prepareConnectionForConnect`, `stopSshTunnel`. The app rewrites
-   host/port before opening.
-5. **Map to interfaces**: backend's two- or three-tier app hierarchy
-   (Server → Database[ → Schema]) flattens onto `IConnection`
-   (`databases()`/`database()`) and `IDatabase` (`schemas()` for
-   Postgres/MSSQL only; otherwise direct `tables()`/`views()`).
-
-The reference implementation is `src/sqlite_connection.cpp`. It shows the
-shape: a private `SQLiteDatabaseNode` implementing `IDatabase`, owned by
-the `SQLiteConnection`, no schema indirection.
+DearSQL (`external/libdearsql` in the app) wraps one `IConnection` per saved
+connection in `ServerDatabase<NodeT>` / `FileDatabase`, and each database in a
+`LibDatabaseNode` that pools `openDatabase(name)` handles (validated with
+`alive()`, cancelled with `cancel()`), runs catalog calls on worker threads and
+shows `dearsql::Error` text in the sidebar. Postgres/MSSQL schema nodes run on
+their database node's pooled handle via `schema(name)`. Its `--tui` /
+`--mcp` terminal modes call the library synchronously. A change
+here that alters an interface must keep those callers compiling — build the app
+and run its `scripts/run-tests` (Docker) when in doubt.
 
 ## Conventions
 
@@ -173,8 +168,13 @@ the `SQLiteConnection`, no schema indirection.
   callers can distinguish SQL NULL from the literal `"NULL"`.
 - bool → `BOOL_TRUE_SENTINEL` / `BOOL_FALSE_SENTINEL` so UI layers can render
   checkboxes.
-- Errors via `Status = pair<bool, string>` for mutations, `QueryResult` for
-  queries (`success()` aggregates over multi-statement results).
+- Errors: catalog and data calls throw `dearsql::Error` (never swallow with
+  `catch (...)` and return empty — hosts show the message); mutations return
+  `Status = pair<bool, string>`; `execute()` reports in `QueryResult`
+  (`success()` aggregates over multi-statement results). `rowLimit <= 0` = unlimited.
+- Paging/counting/DDL come from the `IDatabase` builder defaults (`src/database.cpp`)
+  qualified by `schemaName()`; don't hand-roll SQL a dialect builder can produce.
+- Quote identifiers with the builder and escape literals (`ddl_utils::escapeSingleQuotes`).
 - No spdlog. No imgui. No SSH. No UI state. No comments narrating obvious
   code.
 

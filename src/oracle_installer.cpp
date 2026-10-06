@@ -60,7 +60,21 @@ std::string& cachedDir() {
     return s;
 }
 
+std::mutex& rootMutex() {
+    static std::mutex m;
+    return m;
+}
+std::string& installRoot() {
+    static std::string s;
+    return s;
+}
+
 fs::path baseDir() {
+    {
+        std::lock_guard lock(rootMutex());
+        if (!installRoot().empty())
+            return fs::path(installRoot());
+    }
 #ifdef _WIN32
     const char* home = std::getenv("USERPROFILE");
 #else
@@ -189,6 +203,15 @@ std::string downloadUrl() {
     if (std::strlen(kDownloadPath) == 0)
         return {};
     return std::string(kDownloadHost) + kDownloadPath;
+}
+
+void setInstallRoot(const std::string& dir) {
+    {
+        std::lock_guard lock(rootMutex());
+        installRoot() = dir;
+    }
+    std::lock_guard lock(cacheMutex());
+    cachedDir().clear();
 }
 
 std::string installDir() {

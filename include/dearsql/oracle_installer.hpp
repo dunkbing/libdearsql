@@ -8,12 +8,13 @@ namespace dearsql::oracle {
 
 // Synchronously downloads and extracts Oracle Instant Client Basic Lite for
 // the current platform/arch into a user-local cache directory. The Oracle
-// backend automatically picks it up from there on next connect.
+// backend picks it up from there on next connect (and, unless
+// ClientOptions::autoInstall is off, runs this itself when it is missing).
 //
 // The downloads are direct from download.oracle.com — no Oracle account
-// needed for Basic Lite. The cache lives at:
-//   ~/.dearsql/oracle-client/instantclient_<version>/  (POSIX)
-//   %USERPROFILE%/.dearsql/oracle-client/instantclient_<version>/  (Windows)
+// needed for Basic Lite. The cache lives at <root>/instantclient_<version>/,
+// root defaulting to ~/.dearsql/oracle-client (%USERPROFILE% on Windows); see
+// setInstallRoot().
 //
 // On Linux, also bundles a libaio.so.1 with the SONAME that Oracle's
 // libclntsh.so demands (Ubuntu 24.04+ ships libaio.so.1t64 with a SONAME
@@ -31,6 +32,30 @@ bool isInstalled();
 // Diagnostic: the URL that install() would download from on this platform.
 // Empty string on unsupported platforms.
 std::string downloadUrl();
+
+// Root the client is installed under (instantclient_<version>/ goes inside).
+// Default ~/.dearsql/oracle-client. Set it before the first connect.
+void setInstallRoot(const std::string& dir);
+
+// How the Oracle backend gets the client loaded on connect.
+struct ClientOptions {
+    // run install() inside the first connect when the client is missing
+    bool autoInstall = true;
+    // linux: re-exec the process with installDir() on LD_LIBRARY_PATH so
+    // libclntsh finds libnnz/libclntshcore. Hosts that turn this off must put
+    // installDir() on LD_LIBRARY_PATH themselves (launcher script, AppImage).
+    bool reexecForLibraryPath = true;
+};
+void setClientOptions(const ClientOptions& options);
+
+// true when the ODPI-C context cannot be created (client missing or not
+// loadable). Tries once without installing; a failure is remembered until
+// resetContext() or until the client shows up in installDir().
+bool needsClientInstall();
+
+// forget a failed context init (and the auto-install attempt) so the next
+// connect retries; call after install(). A live context is kept.
+void resetContext();
 
 // Optional progress callback. Phase is one of "downloading", "extracting",
 // "installing-libaio", "done", "error". Bytes are 0 if not applicable.

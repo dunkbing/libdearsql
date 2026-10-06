@@ -13,6 +13,10 @@ add_executable(dearsql_lib_tests
     redshift_tests.cpp
 )
 
+if(DuckDB_FOUND)
+    target_sources(dearsql_lib_tests PRIVATE duckdb_tests.cpp)
+endif()
+
 target_link_libraries(dearsql_lib_tests
     PRIVATE
         dearsql::dearsql

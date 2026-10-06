@@ -1,6 +1,9 @@
 #include "dearsql/factory.hpp"
 
 #include "dearsql/backends/cassandra_connection.hpp"
+#ifdef DEARSQL_HAS_DUCKDB
+#include "dearsql/backends/duckdb_connection.hpp"
+#endif
 #include "dearsql/backends/mongodb_connection.hpp"
 #include "dearsql/backends/mssql_connection.hpp"
 #include "dearsql/backends/mysql_connection.hpp"
@@ -32,7 +35,11 @@ ConnectionPtr makeConnection(const ConnectionInfo& info) {
     case DatabaseType::CASSANDRA:
         return std::make_shared<CassandraConnection>(info);
     case DatabaseType::DUCKDB:
-        break; // app-side backend
+#ifdef DEARSQL_HAS_DUCKDB
+        return std::make_shared<DuckDBConnection>(info);
+#else
+        break;
+#endif
     }
     return nullptr;
 }

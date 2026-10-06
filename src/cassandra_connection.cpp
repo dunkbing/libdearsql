@@ -274,8 +274,10 @@ public:
         return session_;
     }
 
-    // Run a CQL string under the session mutex. Builds a QueryResult.
-    QueryResult execute(const std::string& cql, int rowLimit) {
+    // Run a CQL string under the session mutex. Builds a QueryResult. A keyspace
+    // is switched to under the same lock, so concurrent handles cannot interleave
+    // a USE between another handle's USE and query.
+    QueryResult execute(const std::string& cql, int rowLimit, const std::string& keyspace = "") {
         QueryResult out;
         StatementResult s;
         const auto t0 = std::chrono::high_resolution_clock::now();
@@ -286,6 +288,13 @@ public:
             s.errorMessage = "Not connected";
             out.statements.push_back(std::move(s));
             return out;
+        }
+        if (!keyspace.empty() && keyspace != activeKeyspace_) {
+            auto use = makeStatement(cass_statement_new(("USE " + quoteIdent(keyspace)).c_str(), 0));
+            auto useFut = makeFuture(cass_session_execute(session_, use.get()));
+            cass_future_wait(useFut.get());
+            if (cass_future_error_code(useFut.get()) == CASS_OK)
+                activeKeyspace_ = keyspace;
         }
 
         auto stmt = makeStatement(cass_statement_new(cql.c_str(), 0));
@@ -402,6 +411,7 @@ private:
             cass_future_wait(fut.get());
             cass_session_free(session_);
             session_ = nullptr;
+            activeKeyspace_.clear();
         }
         if (cluster_) {
             cass_cluster_free(cluster_);
@@ -443,6 +453,7 @@ private:
     CassSsl* ssl_ = nullptr;
     bool open_ = false;
     std::mutex mu_; // guards driver handles + execute()
+    std::string activeKeyspace_;
     std::mutex cacheMu_;
     std::unordered_map<std::string, std::shared_ptr<CassandraDatabase>> cache_;
 };
@@ -455,10 +466,7 @@ QueryResult CassandraDatabase::execute(const std::string& sql, int rowLimit) {
     // Cassandra has no per-statement keyspace qualifier for arbitrary CQL.
     // For user queries, prepend USE so unqualified table names resolve in this
     // keyspace. The USE result is dropped from the returned QueryResult.
-    if (!name_.empty()) {
-        parent_->execute("USE " + quoteIdent(name_), 1);
-    }
-    return parent_->execute(sql, rowLimit);
+    return parent_->execute(sql, rowLimit, name_);
 }
 
 std::vector<Column> CassandraDatabase::loadColumns(const std::string& tableName) {

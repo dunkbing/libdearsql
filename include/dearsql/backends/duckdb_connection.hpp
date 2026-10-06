@@ -4,17 +4,22 @@
 
 namespace dearsql {
 
-class MSSQLConnection final : public IConnection {
+// one duckdb database per file; database() shares a connection, openDatabase()
+// opens another connection on the same database (cheap, safe to run in parallel)
+class DuckDBConnection final : public IConnection {
 public:
-    explicit MSSQLConnection(const ConnectionInfo& info);
-    ~MSSQLConnection() override;
+    explicit DuckDBConnection(const ConnectionInfo& info);
+    ~DuckDBConnection() override;
+
+    DuckDBConnection(const DuckDBConnection&) = delete;
+    DuckDBConnection& operator=(const DuckDBConnection&) = delete;
 
     Status open() override;
     void close() override;
     [[nodiscard]] bool isOpen() const override;
 
     [[nodiscard]] DatabaseType type() const override {
-        return DatabaseType::MSSQL;
+        return DatabaseType::DUCKDB;
     }
     [[nodiscard]] const ConnectionInfo& info() const override {
         return info_;
@@ -22,16 +27,12 @@ public:
 
     std::vector<DatabasePtr> databases() override;
     DatabasePtr database(const std::string& name = "") override;
-    // fresh handle with its own DBPROCESS, for host-side pools
     DatabasePtr openDatabase(const std::string& name = "") override;
-
-    Status createDatabase(const CreateDatabaseOptions& opts) override;
-    Status dropDatabase(const std::string& name) override;
-    Status renameDatabase(const std::string& oldName, const std::string& newName) override;
 
 private:
     ConnectionInfo info_;
-    void* impl_ = nullptr; // opaque ConnectionImpl owning DBPROCESS handles
+    std::shared_ptr<void> db_; // duckdb_database, kept alive by every handle
+    DatabasePtr defaultDb_;
 };
 
 } // namespace dearsql

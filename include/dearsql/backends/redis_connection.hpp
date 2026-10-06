@@ -41,7 +41,13 @@ public:
     std::vector<DatabasePtr> databases() override;
     DatabasePtr database(const std::string& name = "") override;
 
-    // Redis-specific helpers (porting these comes next).
+    // keys/expires/avg_ttl per logical db (INFO keyspace). when the server refuses
+    // CONFIG GET databases the count is inferred from the highest db in use
+    std::vector<RedisDbInfo> databaseInfo();
+    [[nodiscard]] int selectedDatabase() const {
+        return selectedDb_;
+    }
+
     std::vector<RedisKey> getKeys(const std::string& pattern = "*", int limit = 1000);
     std::string getKeyValue(const std::string& key, const std::string& knownType = "");
     std::string getKeyType(const std::string& key);

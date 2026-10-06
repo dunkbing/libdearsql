@@ -1,6 +1,8 @@
 #include "dearsql/connection_info.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <filesystem>
 
 namespace dearsql {
 namespace {
@@ -128,6 +130,12 @@ DatabaseType stringToDatabaseType(const std::string& s) {
     if (s == "duckdb")
         return DatabaseType::DUCKDB;
     return DatabaseType::SQLITE;
+}
+
+bool isCsvPath(const std::string& path) {
+    std::string ext = std::filesystem::path(path).extension().string();
+    std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return std::tolower(c); });
+    return ext == ".csv";
 }
 
 std::string ConnectionInfo::buildConnectionString(const std::string& dbName) const {

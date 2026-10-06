@@ -73,6 +73,7 @@ find_package(hiredis_ssl CONFIG QUIET)
 find_package(mongocxx CONFIG REQUIRED)
 find_package(bsoncxx CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
+find_package(DuckDB CONFIG QUIET)
 
 # vendored drivers: freetds_sybdb (or system libsybdb on linux), odpi, cassandra_static
 include(cmake/FreeTDS.cmake)
@@ -82,6 +83,7 @@ include(cmake/CassandraDriver.cmake)
 # ---------- Library ----------
 add_library(libdearsql STATIC
     src/types.cpp
+    src/database.cpp
     src/connection_info.cpp
     src/sql_builder.cpp
     src/factory.cpp
@@ -122,6 +124,12 @@ target_link_libraries(libdearsql
     PRIVATE
         httplib::httplib
 )
+
+if(DuckDB_FOUND)
+    target_sources(libdearsql PRIVATE src/duckdb_connection.cpp)
+    target_link_libraries(libdearsql PUBLIC $<IF:$<TARGET_EXISTS:duckdb>,duckdb,duckdb_static>)
+    target_compile_definitions(libdearsql PUBLIC DEARSQL_HAS_DUCKDB)
+endif()
 
 if(TARGET hiredis::hiredis_ssl)
     target_link_libraries(libdearsql PUBLIC hiredis::hiredis_ssl)
