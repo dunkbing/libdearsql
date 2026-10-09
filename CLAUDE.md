@@ -33,6 +33,17 @@ No `ISchema` — Postgres/MSSQL expose schemas by returning more `IDatabase`s fr
 `schemas()`. Every other backend's `schemas()` returns empty; you call
 `db->tables()` directly. `execute()` lives on `IDatabase`, not `IConnection`.
 
+SQL completion is the one piece that touches no database: `include/dearsql/completion.hpp` /
+`src/completion.cpp` hold a pure engine (tokenizer, statement splitter, clause
+context, alias/CTE/derived-table scopes, dialect keyword and function tables,
+quoting). `complete()`, `resolveIdentifierAt()` and `statementRangeAt()` take
+`(sql, byte offset, CompletionCatalog, DatabaseType)` and nothing else, so the
+GUI editor, the TUI and a language server share one implementation. It leaves to
+the host: loading the catalog (tables/views with columns, sequences, routines) from
+the `IDatabase` calls, deciding when to rebuild it, and all rendering. Keep it
+I/O-free and allocation-light (it runs per keystroke); new SQL-language tooling
+(hover, signature help) belongs next to it.
+
 Common types live in `dearsql::` namespace:
 - `Column`, `Index`, `ForeignKey`, `Routine`, `Table` (`include/dearsql/types.hpp`)
 - `StatementResult`, `QueryResult` (`include/dearsql/query_result.hpp`)
@@ -58,9 +69,11 @@ libdearsql/
 ├── include/dearsql/
 │   ├── dearsql.hpp                — umbrella
 │   ├── types.hpp / query_result.hpp / connection_info.hpp / database.hpp / factory.hpp
+│   ├── completion.hpp             — pure sql completion + identifier resolution
 │   └── backends/                  — one header per backend
 ├── src/
 │   ├── types.cpp / connection_info.cpp / factory.cpp
+│   ├── completion.cpp             — tokenizer, scopes, ranking, dialect word lists
 │   └── *_connection.cpp           — one per backend
 ├── docker/
 │   └── docker-compose.yml         — 8-service stack for integration tests
@@ -69,6 +82,8 @@ libdearsql/
 └── tests/
     ├── test_helpers.hpp           — env loader, tryOpen(), SKIP macros
     ├── common_tests.cpp           — type/helper unit tests (always run)
+    ├── completion_tests.cpp       — completion engine (pure, always run; also built into
+    │                                DearSQL's sql_format_tests)
     ├── sqlite_tests.cpp           — 13 in-memory SQLite tests (always run)
     └── *_tests.cpp                — per-backend; skip when env unset or backend stub
 ```
@@ -97,6 +112,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | Cassandra     | 8     | + keyspace as database, CQL                            |
 | Redshift      | 3     | reuses Postgres backend                                |
 | Common        | 7     | type/helper unit tests                                 |
+| Completion    | 17    | pure: contexts, scopes, quoting, dialects, resolve     |
 
 ## Build
 
@@ -194,7 +210,8 @@ Before pushing a change:
 
 ## Notes for AI Agents
 
-1. **Scope discipline**: this lib is database operations only. If you find
+1. **Scope discipline**: this lib is database operations only. (SQL completion is
+   the exception: pure SQL-language analysis, no I/O, so every host shares it.) If you find
    yourself reaching for UI, logging frameworks, threading, async, or SSH —
    stop. Those concerns belong upstream in the app.
 2. **Stable interfaces**: changing `IConnection` / `IDatabase` ripples through

@@ -10,6 +10,8 @@ Every backend is implemented and covered by the integration suite: SQLite, DuckD
 
 The shared API covers connection lifecycle, database/schema discovery, catalog loading (tables with columns, indexes, foreign keys in and out, sizes; views and materialized views with columns and definitions; sequences; routines), query execution (multi-statement, row limits, informational messages, client-side phase timings), table data paging, table/database DDL, row and column mutation, and dialect SQL via `createSQLBuilder(DatabaseType)`.
 
+SQL completion (`include/dearsql/completion.hpp`) is pure and I/O-free: `complete(sql, cursor, catalog, type)` returns ranked items and the byte range they replace, `resolveIdentifierAt` maps an identifier to its table/column for hover, `statementRangeAt` finds the statement around an offset, and `sqlKeywords`/`sqlFunctions`/`quoteIdentifierIfNeeded` expose the per-dialect tables. It understands strings, comments, quoted identifiers and `$$` bodies, clause context, aliases, CTEs and derived tables. SQL dialects only; Redis and MongoDB return nothing, Cassandra gets CQL keywords.
+
 What a host gets for running work in parallel:
 
 - `IConnection::openDatabase(name)` — a fresh handle with its own connection, for a per-worker pool (`database(name)` returns a shared cached one).
@@ -17,7 +19,7 @@ What a host gets for running work in parallel:
 - `IDatabase::alive()` — false once the session behind a handle is gone, so a pool can replace it.
 - `IDatabase::schema(name)` — a cheap handle for one schema on the same connection (Postgres, MSSQL), no catalog query.
 
-What the library leaves to its host: SSH tunnels, async/threads, pools, progress and UI state, saved-connection storage.
+What the library leaves to its host: SSH tunnels, async/threads, pools, progress and UI state, saved-connection storage, and for completion: loading the catalog it runs over and rendering the items.
 
 ## Contract
 
@@ -86,6 +88,32 @@ for (auto& db : conn->databases()) {
 auto result = conn->database()->execute("SELECT 1, 'hello'");
 ```
 
+## Completion
+
+```cpp
+#include <dearsql/completion.hpp>
+
+dearsql::CompletionCatalog catalog;
+catalog.defaultSchema = "public";
+for (auto& t : db->tables()) {   // schema = the qualifier a user types: "", "public", "db.dbo"
+    t.schema = "public";
+    catalog.tables.push_back(t);
+}
+
+std::string sql = "SELECT u. FROM users u";
+auto result = dearsql::complete(sql, /*cursor=*/9, catalog, dearsql::DatabaseType::POSTGRESQL);
+for (const auto& item : result.items) {
+    // item.label, item.kind (Column), item.detail (type), item.owner (alias)
+}
+// apply: sql.replace(result.replaceStart, result.replaceEnd - result.replaceStart, item.insertText)
+
+if (auto id = dearsql::resolveIdentifierAt(sql, 7, catalog, dearsql::DatabaseType::POSTGRESQL)) {
+    // id->kind, id->table, id->columnInfo (type, comment) for a hover
+}
+```
+
+The catalog is a plain value: build it once from whatever the host has loaded (tables and views with columns, sequences, routines) and rebuild when that changes. `complete()` filters by the text typed so far (exact-case prefix, prefix, word boundary, substring, then subsequence for catalog names), drops an item equal to the typed word, dedupes and sorts. `insertText` is quoted for the dialect when a name needs it and qualified with its schema when that is not `defaultSchema`. Tests: `tests/completion_tests.cpp` (no database needed).
+
 ## Layout
 
 ```
@@ -103,6 +131,7 @@ libdearsql/
 ├── include/dearsql/
 │   ├── dearsql.hpp              # umbrella header
 │   ├── types.hpp                # Column, Index, ForeignKey, Routine, Table
+│   ├── completion.hpp           # sql completion + identifier resolution (pure)
 │   ├── query_result.hpp         # StatementResult, QueryResult
 │   ├── sql_builder.hpp          # dialect quoting + SQL generation
 │   ├── connection_info.hpp      # DatabaseType, SslMode, ConnectionInfo
@@ -122,6 +151,7 @@ libdearsql/
 │       └── cassandra_connection.hpp
 ├── src/
 │   ├── types.cpp
+│   ├── completion.cpp
 │   ├── connection_info.cpp
 │   ├── factory.cpp
 │   ├── database.cpp             # IDatabase builder-based defaults
@@ -129,6 +159,7 @@ libdearsql/
 │   └── *_connection.cpp
 └── tests/
     ├── common_tests.cpp
+    ├── completion_tests.cpp     # pure, no database
     ├── sqlite_tests.cpp
     └── *_tests.cpp              # per backend, skip without DEARSQL_TEST_* env
 ```

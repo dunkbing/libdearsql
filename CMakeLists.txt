@@ -83,6 +83,7 @@ include(cmake/CassandraDriver.cmake)
 # ---------- Library ----------
 add_library(libdearsql STATIC
     src/types.cpp
+    src/completion.cpp
     src/database.cpp
     src/connection_info.cpp
     src/sql_builder.cpp

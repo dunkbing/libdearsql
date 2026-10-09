@@ -1,6 +1,7 @@
 #pragma once
 
 // Convenience umbrella header for libdearsql users.
+#include "completion.hpp"
 #include "connection_info.hpp"
 #include "database.hpp"
 #include "factory.hpp"
