@@ -1,4 +1,5 @@
 #include "dearsql/backends/postgres_connection.hpp"
+#include "dearsql/completion.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -11,6 +12,7 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -89,41 +91,67 @@ void waitForFirstByte(PGconn* conn) {
     select(sock + 1, &fds, nullptr, nullptr, nullptr);
 }
 
+// appends a (chunk of a) row set, keeping at most rowLimit rows (<= 0 keeps all)
+void appendPgRows(PGresult* res, StatementResult& result, int rowLimit) {
+    const int nFields = PQnfields(res);
+    if (result.columnNames.empty()) {
+        for (int col = 0; col < nFields; col++)
+            result.columnNames.emplace_back(PQfname(res, col));
+    }
+    const int nRows = PQntuples(res);
+    const int have = static_cast<int>(result.tableData.size());
+    const int limit = rowLimit > 0 ? std::min(nRows, std::max(0, rowLimit - have)) : nRows;
+    for (int row = 0; row < limit; row++) {
+        std::vector<std::string> rowData;
+        rowData.reserve(nFields);
+        for (int col = 0; col < nFields; col++) {
+            if (PQgetisnull(res, row, col)) {
+                rowData.emplace_back(NULL_SENTINEL);
+            } else if (PQftype(res, col) == 16) { // BOOLOID
+                const char* v = PQgetvalue(res, row, col);
+                rowData.emplace_back(v[0] == 't' ? BOOL_TRUE_SENTINEL : BOOL_FALSE_SENTINEL);
+            } else {
+                rowData.emplace_back(PQgetvalue(res, row, col),
+                                     static_cast<size_t>(PQgetlength(res, row, col)));
+            }
+        }
+        result.tableData.push_back(std::move(rowData));
+    }
+}
+
+void setRowsMessage(StatementResult& result, long long total, int rowLimit, bool stopped) {
+    result.message = std::format("Returned {} row{}", result.tableData.size(),
+                                 result.tableData.size() == 1 ? "" : "s");
+    if (stopped)
+        result.message += std::format(" (limited to {}; the rest was not fetched)", rowLimit);
+    else if (rowLimit > 0 && total > rowLimit)
+        result.message += std::format(" (limited to {})", rowLimit);
+}
+
+// one plain read statement and no open transaction: stopping it early after
+// rowLimit rows has nothing to roll back
+// ponytail: a SELECT calling a writing function is stopped (and rolled back)
+// too; parse for volatile calls if that ever matters
+bool stoppableRead(const std::string& sql) {
+    const auto [begin, end] = statementRangeAt(sql, 0, DatabaseType::POSTGRESQL);
+    for (size_t i = end; i < sql.size(); ++i) {
+        if (sql[i] != ';' && !std::isspace(static_cast<unsigned char>(sql[i])))
+            return false;
+    }
+    std::string word;
+    for (size_t i = begin; i < end && std::isalpha(static_cast<unsigned char>(sql[i])); ++i)
+        word += static_cast<char>(std::tolower(static_cast<unsigned char>(sql[i])));
+    return word == "select" || word == "table" || word == "values";
+}
+
 // rowLimit <= 0 keeps every row
 StatementResult extractPgResult(PGresult* res, int rowLimit) {
     StatementResult result;
     ExecStatusType status = PQresultStatus(res);
 
     if (status == PGRES_TUPLES_OK) {
-        const int nFields = PQnfields(res);
-        const int nRows = PQntuples(res);
-        std::vector<bool> isBoolCol(nFields, false);
-        for (int col = 0; col < nFields; col++) {
-            result.columnNames.emplace_back(PQfname(res, col));
-            isBoolCol[col] = (PQftype(res, col) == 16); // BOOLOID
-        }
-        const int limit = rowLimit > 0 ? std::min(nRows, rowLimit) : nRows;
-        result.tableData.reserve(limit);
-        for (int row = 0; row < limit; row++) {
-            std::vector<std::string> rowData;
-            rowData.reserve(nFields);
-            for (int col = 0; col < nFields; col++) {
-                if (PQgetisnull(res, row, col)) {
-                    rowData.emplace_back(NULL_SENTINEL);
-                } else if (isBoolCol[col]) {
-                    const char* v = PQgetvalue(res, row, col);
-                    rowData.emplace_back(v[0] == 't' ? BOOL_TRUE_SENTINEL : BOOL_FALSE_SENTINEL);
-                } else {
-                    rowData.emplace_back(PQgetvalue(res, row, col),
-                                         static_cast<size_t>(PQgetlength(res, row, col)));
-                }
-            }
-            result.tableData.push_back(std::move(rowData));
-        }
-        result.message = std::format("Returned {} row{}", result.tableData.size(),
-                                     result.tableData.size() == 1 ? "" : "s");
-        if (rowLimit > 0 && nRows > rowLimit)
-            result.message += std::format(" (limited to {})", rowLimit);
+        appendPgRows(res, result, rowLimit);
+        setRowsMessage(result, PQntuples(res), rowLimit, false);
     } else if (status == PGRES_COMMAND_OK) {
         const char* affected = PQcmdTuples(res);
         if (affected && *affected) {
@@ -307,17 +335,28 @@ QueryResult PostgresDatabase::run(const std::string& sql, int rowLimit, bool tim
     }
     const auto tPing = Clock::now();
 
+    // a capped result streams in chunks, so `SELECT * FROM huge` neither holds
+    // the whole table in memory nor (when safe to stop) waits for all of it
+    const bool capped = rowLimit > 0;
+    const bool stoppable =
+        capped && PQtransactionStatus(conn_) == PQTRANS_IDLE && stoppableRead(sql);
     if (!PQsendQuery(conn_, sql.c_str())) {
         result.statements.push_back(failure(PQerrorMessage(conn_)));
         result.executionTimeMs = toMs(Clock::now() - startTime);
         return result;
     }
+    if (capped)
+        PQsetChunkedRowsMode(conn_, std::min(rowLimit, 500));
     if (timed)
         waitForFirstByte(conn_);
     const auto tExec = Clock::now();
 
     double downloadMs = 0.0;
     double parseMs = 0.0;
+    StatementResult rows; // the row set being streamed
+    bool streaming = false;
+    long long seen = 0;
+    bool stopped = false;
     for (;;) {
         const auto tDl = Clock::now();
         PGresult* raw = PQgetResult(conn_);
@@ -326,10 +365,37 @@ QueryResult PostgresDatabase::run(const std::string& sql, int rowLimit, bool tim
             break;
         PgResultPtr res(raw);
         const auto tParse = Clock::now();
-        auto r = extractPgResult(res.get(), rowLimit);
+        const auto status = PQresultStatus(res.get());
+        if (status == PGRES_TUPLES_CHUNK || (streaming && status == PGRES_TUPLES_OK)) {
+            appendPgRows(res.get(), rows, rowLimit);
+            seen += PQntuples(res.get());
+            streaming = status == PGRES_TUPLES_CHUNK;
+            if (streaming && stoppable && !stopped && seen > rowLimit) {
+                cancel();
+                stopped = true;
+            }
+            if (!streaming) {
+                setRowsMessage(rows, seen, rowLimit, false);
+                result.statements.push_back(std::exchange(rows, {}));
+                seen = 0;
+            }
+        } else if (streaming) {
+            // our own cancel ends the stream; any other error is the user's
+            streaming = false;
+            if (stopped) {
+                setRowsMessage(rows, seen, rowLimit, true);
+                result.statements.push_back(std::exchange(rows, {}));
+            } else {
+                rows = {};
+                result.statements.push_back(extractPgResult(res.get(), rowLimit));
+            }
+            seen = 0;
+        } else {
+            auto r = extractPgResult(res.get(), rowLimit);
+            if (r.success || !r.errorMessage.empty())
+                result.statements.push_back(std::move(r));
+        }
         parseMs += toMs(Clock::now() - tParse);
-        if (r.success || !r.errorMessage.empty())
-            result.statements.push_back(std::move(r));
     }
 
     // coarse client-side split; execution includes one-way latency
