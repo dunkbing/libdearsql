@@ -1,6 +1,7 @@
 #include "dearsql/backends/cassandra_connection.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cassandra.h>
 #include <chrono>
 #include <cstring>
@@ -161,12 +162,36 @@ std::string getStringCol(const CassRow* row, const char* name) {
     return std::string(s ? s : "", n);
 }
 
+// cluster, session and ssl of one open(); shared so a query running on another
+// thread keeps the session alive through a concurrent close()
+struct DriverState {
+    CassCluster* cluster = nullptr;
+    CassSession* session = nullptr;
+    CassSsl* ssl = nullptr;
+
+    DriverState() = default;
+    DriverState(const DriverState&) = delete;
+    DriverState& operator=(const DriverState&) = delete;
+    ~DriverState() {
+        if (session) {
+            auto fut = makeFuture(cass_session_close(session));
+            cass_future_wait(fut.get());
+            cass_session_free(session);
+        }
+        if (cluster)
+            cass_cluster_free(cluster);
+        if (ssl)
+            cass_ssl_free(ssl);
+    }
+};
+using DriverStatePtr = std::shared_ptr<DriverState>;
+
 // run a CQL statement synchronously and return (result, error). result is null on error.
-std::pair<ResultPtr, std::string> runCql(CassSession* session, const std::string& cql) {
-    if (!session)
+std::pair<ResultPtr, std::string> runCql(const DriverStatePtr& state, const std::string& cql) {
+    if (!state || !state->session)
         return {ResultPtr{nullptr, cass_result_free}, "Not connected"};
     auto stmt = makeStatement(cass_statement_new(cql.c_str(), 0));
-    auto fut = makeFuture(cass_session_execute(session, stmt.get()));
+    auto fut = makeFuture(cass_session_execute(state->session, stmt.get()));
     cass_future_wait(fut.get());
     if (cass_future_error_code(fut.get()) != CASS_OK) {
         return {ResultPtr{nullptr, cass_result_free}, futureError(fut.get())};
@@ -221,37 +246,32 @@ public:
             info_.port = 9042;
     }
 
-    ~CassandraConnImpl() {
-        freeDriverState();
-    }
-
     Status open() {
         std::lock_guard lock(mu_);
-        freeDriverState();
+        state_.reset();
+        activeKeyspace_.clear();
+        open_ = false;
 
-        cluster_ = cass_cluster_new();
-        cass_cluster_set_contact_points(cluster_, info_.host.c_str());
-        cass_cluster_set_port(cluster_, info_.port);
+        auto st = std::make_shared<DriverState>();
+        st->cluster = cass_cluster_new();
+        cass_cluster_set_contact_points(st->cluster, info_.host.c_str());
+        cass_cluster_set_port(st->cluster, info_.port);
         if (!info_.username.empty()) {
-            cass_cluster_set_credentials(cluster_, info_.username.c_str(),
+            cass_cluster_set_credentials(st->cluster, info_.username.c_str(),
                                          info_.password.c_str());
         }
-        cass_cluster_set_connect_timeout(cluster_, 10000);
-        cass_cluster_set_request_timeout(cluster_, 30000);
+        cass_cluster_set_connect_timeout(st->cluster, 10000);
+        cass_cluster_set_request_timeout(st->cluster, 30000);
 
-        if (auto [ok, err] = applySslConfig(); !ok) {
-            freeDriverState();
+        if (auto [ok, err] = applySslConfig(*st); !ok)
             return {false, err};
-        }
 
-        session_ = cass_session_new();
-        auto fut = makeFuture(cass_session_connect(session_, cluster_));
+        st->session = cass_session_new();
+        auto fut = makeFuture(cass_session_connect(st->session, st->cluster));
         cass_future_wait(fut.get());
-        if (cass_future_error_code(fut.get()) != CASS_OK) {
-            std::string err = "Cassandra connect failed: " + futureError(fut.get());
-            freeDriverState();
-            return {false, err};
-        }
+        if (cass_future_error_code(fut.get()) != CASS_OK)
+            return {false, "Cassandra connect failed: " + futureError(fut.get())};
+        state_ = std::move(st);
         open_ = true;
         return {true, ""};
     }
@@ -259,7 +279,9 @@ public:
     void close() {
         std::lock_guard lock(mu_);
         cache_.clear();
-        freeDriverState();
+        // a catalog query still running elsewhere holds its own reference
+        state_.reset();
+        activeKeyspace_.clear();
         open_ = false;
     }
 
@@ -270,8 +292,9 @@ public:
         return info_;
     }
 
-    CassSession* session() {
-        return session_;
+    DriverStatePtr session() {
+        std::lock_guard lock(mu_);
+        return state_;
     }
 
     // Run a CQL string under the session mutex. Builds a QueryResult. A keyspace
@@ -283,15 +306,17 @@ public:
         const auto t0 = std::chrono::high_resolution_clock::now();
 
         std::lock_guard lock(mu_);
-        if (!session_) {
+        CassSession* session = state_ ? state_->session : nullptr;
+        if (!session) {
             s.success = false;
             s.errorMessage = "Not connected";
             out.statements.push_back(std::move(s));
             return out;
         }
         if (!keyspace.empty() && keyspace != activeKeyspace_) {
-            auto use = makeStatement(cass_statement_new(("USE " + quoteIdent(keyspace)).c_str(), 0));
-            auto useFut = makeFuture(cass_session_execute(session_, use.get()));
+            auto use =
+                makeStatement(cass_statement_new(("USE " + quoteIdent(keyspace)).c_str(), 0));
+            auto useFut = makeFuture(cass_session_execute(session, use.get()));
             cass_future_wait(useFut.get());
             if (cass_future_error_code(useFut.get()) == CASS_OK)
                 activeKeyspace_ = keyspace;
@@ -300,7 +325,7 @@ public:
         auto stmt = makeStatement(cass_statement_new(cql.c_str(), 0));
         cass_statement_set_paging_size(stmt.get(), rowLimit > 0 ? rowLimit : 1000);
 
-        auto fut = makeFuture(cass_session_execute(session_, stmt.get()));
+        auto fut = makeFuture(cass_session_execute(session, stmt.get()));
         cass_future_wait(fut.get());
         if (cass_future_error_code(fut.get()) != CASS_OK) {
             s.success = false;
@@ -405,28 +430,10 @@ public:
     }
 
 private:
-    void freeDriverState() {
-        if (session_) {
-            auto fut = makeFuture(cass_session_close(session_));
-            cass_future_wait(fut.get());
-            cass_session_free(session_);
-            session_ = nullptr;
-            activeKeyspace_.clear();
-        }
-        if (cluster_) {
-            cass_cluster_free(cluster_);
-            cluster_ = nullptr;
-        }
-        if (ssl_) {
-            cass_ssl_free(ssl_);
-            ssl_ = nullptr;
-        }
-    }
-
-    std::pair<bool, std::string> applySslConfig() {
+    std::pair<bool, std::string> applySslConfig(DriverState& st) {
         if (info_.sslmode == SslMode::Disable)
             return {true, ""};
-        ssl_ = cass_ssl_new();
+        st.ssl = cass_ssl_new();
 
         if (info_.sslmode == SslMode::VerifyCA && !info_.sslCACertPath.empty()) {
             std::ifstream f(info_.sslCACertPath, std::ios::binary);
@@ -435,24 +442,22 @@ private:
             std::ostringstream pem;
             pem << f.rdbuf();
             const std::string s = pem.str();
-            if (cass_ssl_add_trusted_cert_n(ssl_, s.data(), s.size()) != CASS_OK)
+            if (cass_ssl_add_trusted_cert_n(st.ssl, s.data(), s.size()) != CASS_OK)
                 return {false, "Failed to add CA cert to SSL context"};
-            cass_ssl_set_verify_flags(ssl_, CASS_SSL_VERIFY_PEER_CERT);
+            cass_ssl_set_verify_flags(st.ssl, CASS_SSL_VERIFY_PEER_CERT);
         } else {
             // require / no CA: encrypt only, do not verify
-            cass_ssl_set_verify_flags(ssl_, CASS_SSL_VERIFY_NONE);
+            cass_ssl_set_verify_flags(st.ssl, CASS_SSL_VERIFY_NONE);
         }
 
-        cass_cluster_set_ssl(cluster_, ssl_);
+        cass_cluster_set_ssl(st.cluster, st.ssl);
         return {true, ""};
     }
 
     ConnectionInfo info_;
-    CassCluster* cluster_ = nullptr;
-    CassSession* session_ = nullptr;
-    CassSsl* ssl_ = nullptr;
-    bool open_ = false;
-    std::mutex mu_; // guards driver handles + execute()
+    DriverStatePtr state_;
+    std::atomic<bool> open_ = false;
+    std::mutex mu_; // guards state_, activeKeyspace_ and execute()
     std::string activeKeyspace_;
     std::mutex cacheMu_;
     std::unordered_map<std::string, std::shared_ptr<CassandraDatabase>> cache_;

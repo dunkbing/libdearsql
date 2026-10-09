@@ -15,7 +15,7 @@ SQL completion (`include/dearsql/completion.hpp`) is pure and I/O-free: `complet
 What a host gets for running work in parallel:
 
 - `IConnection::openDatabase(name)` — a fresh handle with its own connection, for a per-worker pool (`database(name)` returns a shared cached one).
-- `IDatabase::cancel()` — best-effort cancel of the query running on that handle, callable from another thread (`KILL QUERY`, `PQcancel`, `sqlite3_interrupt`, `duckdb_interrupt`, `dpiConn_breakExecution`, a flag checked between rows on MSSQL).
+- `IDatabase::cancel()` — best-effort cancel of the query running on that handle, callable from another thread; it never drives the busy connection itself. PostgreSQL: `PQcancel` on a separate cancel object. MySQL: `KILL QUERY <thread id>` from a throwaway connection with 5 s connect/read/write timeouts. SQLite / DuckDB: `sqlite3_interrupt` / `duckdb_interrupt`. Oracle: `dpiConn_breakExecution` (ORA-01013; a running statement stops at once, but a PL/SQL `DBMS_SESSION.SLEEP` only notices an in-band break when it returns, e.g. through Docker Desktop's port forwarding). MSSQL: an atomic flag read by db-lib's interrupt hook, which FreeTDS polls every second while it waits on the server, and between rows; the attention drops the `DBPROCESS`, so `alive()` turns false and the next call reconnects. MongoDB, Redis and Cassandra: no-op (no driver-level cancel of an in-flight request; Cassandra requests time out after 30 s).
 - `IDatabase::alive()` — false once the session behind a handle is gone, so a pool can replace it.
 - `IDatabase::schema(name)` — a cheap handle for one schema on the same connection (Postgres, MSSQL), no catalog query.
 
@@ -29,6 +29,7 @@ What the library leaves to its host: SSH tunnels, async/threads, pools, progress
 - SQL `NULL` comes back as `NULL_SENTINEL`, booleans as `BOOL_TRUE_SENTINEL` / `BOOL_FALSE_SENTINEL`, so a UI can tell them from the strings `"NULL"` / `"true"`.
 - `IDatabase` implements paging, counting and DDL (create/rename/drop/truncate table, add/rename/alter/drop column, drop view, insert/update/delete row) with the dialect builder over `execute()`, qualified by `schemaName()`; backends override only what their dialect cannot express in SQL (Mongo, Redis).
 - `ConnectionInfo::readOnly` opens SQLite and DuckDB read-only; server backends rely on the host refusing writes.
+- On server backends `IConnection::database()`, `openDatabase()`, `close()` and `dropDatabase()` may be called from different threads (the handle cache is locked); a single `IDatabase` serializes its own calls, except `cancel()`, which is meant to run concurrently.
 
 Backend extras, on the concrete classes:
 
@@ -39,7 +40,7 @@ Backend extras, on the concrete classes:
 | Redis | `RedisConnection::databaseInfo()` (keys/expires/avg TTL per logical db; db count inferred when `CONFIG GET databases` is refused), `selectedDatabase()`, key helpers |
 | Oracle | each schema handle has its own session with `CURRENT_SCHEMA` set; `dearsql::oracle` installer: `install(onProgress, shouldCancel)`, `setInstallRoot(dir)`, `setClientOptions({autoInstall, reexecForLibraryPath})`, `needsClientInstall()`, `resetContext()` |
 | MSSQL | `PRINT` / `RAISERROR` (severity ≤ 10) in `QueryResult::messages`; system databases hidden |
-| Cassandra | keyspace switch and query under one lock, so concurrent handles never interleave a `USE` |
+| Cassandra | keyspace switch and query under one lock, so concurrent handles never interleave a `USE`; catalog queries hold a reference to the session, so a `close()` from another thread frees it only once they finish |
 
 ## Build
 

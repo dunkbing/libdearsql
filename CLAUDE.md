@@ -92,7 +92,9 @@ libdearsql/
 
 All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built
 when CMake finds DuckDB; `.csv` paths open as an in-memory table). Every server
-backend has `openDatabase()`, `cancel()` and `alive()`; Postgres/MSSQL have a cheap
+backend has `openDatabase()`, `cancel()` and `alive()` (cancel is a no-op on MongoDB,
+Redis and Cassandra; README "Status" lists the mechanism per backend — never drive
+the busy handle from the cancelling thread); Postgres/MSSQL have a cheap
 `schema(name)`. See README "Contract" for the error and sentinel rules.
 `QueryResult` also carries `messages` (mssql PRINT output) and `phaseTimings`
 (postgres/mysql client-side timings) because the app renders them.

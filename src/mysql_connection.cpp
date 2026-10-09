@@ -72,13 +72,19 @@ bool shouldApplySslCA(const ConnectionInfo& info) {
 
 // Open a fresh MYSQL* connected to the requested database. Caller owns the
 // returned handle and must mysql_close() it. Throws on failure.
-MYSQL* openMysql(const ConnectionInfo& info, const std::string& dbName) {
+// ioTimeoutSeconds 0 = no read/write timeout (user queries may run for hours)
+MYSQL* openMysql(const ConnectionInfo& info, const std::string& dbName,
+                 unsigned int ioTimeoutSeconds = 0) {
     MYSQL* conn = mysql_init(nullptr);
     if (!conn)
         throw std::runtime_error("mysql_init failed");
 
     constexpr unsigned int connectTimeoutSeconds = 5;
     mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &connectTimeoutSeconds);
+    if (ioTimeoutSeconds > 0) {
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &ioTimeoutSeconds);
+        mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &ioTimeoutSeconds);
+    }
 
     constexpr unsigned int tcpProtocol = MYSQL_PROTOCOL_TCP;
     mysql_options(conn, MYSQL_OPT_PROTOCOL, &tcpProtocol);
@@ -213,7 +219,13 @@ MySQLDatabase::~MySQLDatabase() {
 void MySQLDatabase::ensureConn() {
     if (conn_)
         return;
-    conn_ = openMysql(info_, name_);
+    // two first calls racing must not both connect
+    std::lock_guard lock(openMu_);
+    if (conn_)
+        return;
+    MYSQL* c = openMysql(info_, name_);
+    threadId_ = mysql_thread_id(c);
+    conn_ = c;
 }
 
 Status MySQLDatabase::open() {
@@ -233,12 +245,14 @@ bool MySQLDatabase::ping() {
 }
 
 void MySQLDatabase::cancel() {
-    // a busy MYSQL* cannot issue anything itself, so kill from a throwaway connection
-    if (!conn_)
+    // a busy MYSQL* cannot issue anything itself, so kill from a throwaway
+    // connection; the thread id is cached so the busy handle is never read
+    const unsigned long threadId = threadId_;
+    if (threadId == 0)
         return;
-    const auto threadId = mysql_thread_id(conn_);
     try {
-        MYSQL* killer = openMysql(info_, "");
+        // bounded i/o: a dead network must not hang the canceller
+        MYSQL* killer = openMysql(info_, "", 5);
         const std::string sql = std::format("KILL QUERY {}", threadId);
         mysql_query(killer, sql.c_str());
         mysql_close(killer);
@@ -770,7 +784,7 @@ public:
 
     Status open() {
         try {
-            auto db = std::dynamic_pointer_cast<MySQLDatabase>(database(info_.database));
+            auto db = std::dynamic_pointer_cast<MySQLDatabase>(database(""));
             if (!db)
                 return {false, "could not create default database handle"};
             auto st = db->open();
@@ -783,6 +797,7 @@ public:
     }
 
     void close() {
+        std::lock_guard lock(mu_);
         cache_.clear();
         open_ = false;
     }
@@ -794,7 +809,7 @@ public:
     }
 
     std::vector<DatabasePtr> databases() {
-        auto def = std::dynamic_pointer_cast<MySQLDatabase>(database(info_.database));
+        auto def = std::dynamic_pointer_cast<MySQLDatabase>(database(""));
         if (!def)
             return {};
         auto r = def->execute("SHOW DATABASES", 10000);
@@ -813,7 +828,9 @@ public:
         return out;
     }
 
+    // the app's mcp tools call this from an http thread while the ui opens and closes
     DatabasePtr database(const std::string& name) {
+        std::lock_guard lock(mu_);
         const std::string n = name.empty() ? info_.database : name;
         auto it = cache_.find(n);
         if (it != cache_.end())
@@ -824,11 +841,12 @@ public:
     }
 
     DatabasePtr openDatabase(const std::string& name) {
+        std::lock_guard lock(mu_);
         return std::make_shared<MySQLDatabase>(info_, name.empty() ? info_.database : name);
     }
 
     Status createDatabase(const CreateDatabaseOptions& opts) {
-        auto def = std::dynamic_pointer_cast<MySQLDatabase>(database(info_.database));
+        auto def = std::dynamic_pointer_cast<MySQLDatabase>(database(""));
         if (!def)
             return {false, "no default connection"};
         if (opts.name.empty())
@@ -849,8 +867,10 @@ public:
     Status dropDatabase(const std::string& name) {
         // dropping the connected database goes through a temp connection with
         // no default schema, so the open handle is not pulled from under us
+        std::unique_lock lock(mu_);
         const bool isDroppingConnectedDb = (name == info_.database);
         cache_.erase(name);
+        lock.unlock();
 
         if (isDroppingConnectedDb) {
             MYSQL* tempConn = nullptr;
@@ -866,11 +886,12 @@ public:
                 return {false, err};
             }
             mysql_close(tempConn);
+            std::lock_guard relock(mu_);
             info_.database = ""; // no default schema from here on
             return {true, ""};
         }
 
-        auto def = std::dynamic_pointer_cast<MySQLDatabase>(database(info_.database));
+        auto def = std::dynamic_pointer_cast<MySQLDatabase>(database(""));
         if (!def)
             return {false, "no default connection"};
         auto r = def->execute("DROP DATABASE " + quoteIdent(name), 0);
@@ -884,7 +905,8 @@ public:
 
 private:
     ConnectionInfo info_;
-    bool open_ = false;
+    std::atomic<bool> open_ = false;
+    std::mutex mu_; // guards cache_ and info_.database
     std::unordered_map<std::string, std::shared_ptr<MySQLDatabase>> cache_;
 };
 } // namespace

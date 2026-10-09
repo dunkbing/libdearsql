@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dearsql/database.hpp"
+#include <atomic>
 #include <mutex>
 
 struct st_mysql; // MYSQL from <mysql/mysql.h>, kept out of the public header
@@ -66,7 +67,10 @@ private:
 
     ConnectionInfo info_;
     std::string name_;
-    st_mysql* conn_ = nullptr;
+    // atomic: cancel() and isOpen() read it while a worker opens it
+    std::atomic<st_mysql*> conn_ = nullptr;
+    std::atomic<unsigned long> threadId_ = 0; // server thread for KILL QUERY
+    std::mutex openMu_;
     std::mutex mu_;
 };
 

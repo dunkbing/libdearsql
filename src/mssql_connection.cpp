@@ -641,7 +641,10 @@ public:
     // call notice between rows, or the interrupt hook while it waits on the
     // server (which drops the connection; the next call reconnects)
     void cancel() override {
-        cancelled_ = true;
+        // ponytail: a cancel racing the end of a call can still mark the next one;
+        // a per-call generation would close that window
+        if (inCall_ > 0)
+            cancelled_ = true;
     }
 
     std::vector<DatabasePtr> schemas() override;
@@ -679,6 +682,7 @@ private:
     std::string name_;
     DBPROCESS* conn_ = nullptr;
     std::atomic<bool> cancelled_ = false;
+    std::atomic<int> inCall_ = 0; // execute() calls waiting for or holding mu_
     std::mutex mu_;
 };
 
@@ -737,6 +741,7 @@ private:
 
 QueryResult MSSQLDatabase::execute(const std::string& sql, int rowLimit) {
     const auto startTime = std::chrono::steady_clock::now();
+    ++inCall_;
     std::lock_guard lock(mu_);
     QueryResult result;
     try {
@@ -748,6 +753,7 @@ QueryResult MSSQLDatabase::execute(const std::string& sql, int rowLimit) {
     // cleared after the run, not before: a cancel that lands while this call
     // waits for mu_ is meant for it
     cancelled_ = false;
+    --inCall_;
     result.executionTimeMs =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime)
             .count();
