@@ -524,7 +524,17 @@ Table describeTableInSchema(IDatabase& db, const std::string& schema,
     const std::string obj = objectLiteral(schema, tableName);
 
     for (const auto& row :
-         rows(db, std::format("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, "
+         rows(db, std::format("SELECT COLUMN_NAME, DATA_TYPE + CASE "
+                              "WHEN DATA_TYPE IN ('varchar', 'char', 'nvarchar', 'nchar', "
+                              "'varbinary', 'binary') THEN '(' + CASE WHEN "
+                              "CHARACTER_MAXIMUM_LENGTH = -1 THEN 'max' ELSE "
+                              "CAST(CHARACTER_MAXIMUM_LENGTH AS varchar(10)) END + ')' "
+                              "WHEN DATA_TYPE IN ('decimal', 'numeric') THEN '(' + "
+                              "CAST(NUMERIC_PRECISION AS varchar(5)) + ',' + "
+                              "CAST(NUMERIC_SCALE AS varchar(5)) + ')' "
+                              "WHEN DATA_TYPE IN ('datetime2', 'time', 'datetimeoffset') "
+                              "THEN '(' + CAST(DATETIME_PRECISION AS varchar(5)) + ')' "
+                              "ELSE '' END, IS_NULLABLE, "
                               "ISNULL(COLUMN_DEFAULT, ''), "
                               "COLUMNPROPERTY(OBJECT_ID({2}), COLUMN_NAME, 'IsIdentity') "
                               "FROM INFORMATION_SCHEMA.COLUMNS "
@@ -537,7 +547,8 @@ Table describeTableInSchema(IDatabase& db, const std::string& schema,
         c.name = row[0];
         c.type = row[1];
         c.isNotNull = row[2] == "NO";
-        c.defaultValue = row[3];
+        // db-lib pads the ISNULL() fallback
+        c.defaultValue = row[3].substr(0, row[3].find_last_not_of(' ') + 1);
         c.isAutoIncrement = row[4] == "1";
         t.columns.push_back(std::move(c));
     }

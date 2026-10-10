@@ -98,17 +98,21 @@ the busy handle from the cancelling thread); Postgres/MSSQL have a cheap
 `schema(name)`. See README "Contract" for the error and sentinel rules.
 `QueryResult` also carries `messages` (mssql PRINT output) and `phaseTimings`
 (postgres/mysql client-side timings) because the app renders them.
+`tableDdl()` is the one catalog call with per-dialect SQL in `src/database.cpp`
+(a switch on `type()`, so schema views get it through `schemaName()`); Postgres
+builds it from the catalog, the rest ask the server or fall back to
+`ISQLBuilder::tableDdl` over `describeTable()`.
 
 Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests`):
 
 | Backend       | Tests | Notes                                                  |
 | ------------- | ----- | ------------------------------------------------------ |
-| SQLite        | 14    | full                                                   |
-| DuckDB        | 4     | + foreign keys, csv files, parallel handles            |
-| PostgreSQL    | 16    | + schemas, sequences, routines, materialized views     |
-| MySQL         | 13    | + AUTO_INCREMENT detect, routines                      |
-| MSSQL         | 10    | + dbo schema, OFFSET/FETCH paging                      |
-| Oracle        | 8     | + sequences, FREEPDB1 PDB                              |
+| SQLite        | 16    | full, + table DDL round trip and builder fallback      |
+| DuckDB        | 5     | + foreign keys, csv files, parallel handles, DDL       |
+| PostgreSQL    | 17    | + schemas, sequences, routines, matviews, catalog DDL  |
+| MySQL         | 14    | + AUTO_INCREMENT detect, routines, SHOW CREATE TABLE   |
+| MSSQL         | 11    | + dbo schema, OFFSET/FETCH paging, builder DDL         |
+| Oracle        | 9     | + sequences, FREEPDB1 PDB, DBMS_METADATA DDL           |
 | MongoDB       | 7     | + collections-as-tables, JSON command execute          |
 | Redis         | 8     | + key types, TTL, SCAN, SELECT db                      |
 | Cassandra     | 8     | + keyspace as database, CQL                            |

@@ -141,3 +141,20 @@ TEST(Oracle, Sequences) {
     EXPECT_TRUE(found);
     db->execute("DROP SEQUENCE DEARSQL_LIB_ORA_SEQ");
 }
+
+TEST(Oracle, TableDdlFromMetadata) {
+    OPEN_OR_SKIP(conn, st);
+    auto db = conn->database();
+    db->execute("DROP TABLE dearsql_ddl_t PURGE", 0);
+    ASSERT_TRUE(db->execute("CREATE TABLE dearsql_ddl_t (id NUMBER PRIMARY KEY, "
+                            "code VARCHAR2(12) NOT NULL)",
+                            0)
+                    .success());
+    ASSERT_TRUE(db->execute("CREATE INDEX dearsql_ddl_code ON dearsql_ddl_t (code)", 0).success());
+    const auto ddl = db->tableDdl("DEARSQL_DDL_T");
+    EXPECT_NE(ddl.find("CREATE TABLE"), std::string::npos) << ddl;
+    EXPECT_NE(ddl.find("VARCHAR2(12)"), std::string::npos) << ddl;
+    EXPECT_NE(ddl.find("DEARSQL_DDL_CODE"), std::string::npos) << ddl;
+    EXPECT_EQ(ddl.find("TABLESPACE"), std::string::npos) << ddl;
+    db->execute("DROP TABLE dearsql_ddl_t PURGE", 0);
+}

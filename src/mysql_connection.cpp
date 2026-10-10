@@ -159,7 +159,8 @@ StatementResult extractMysqlResult(MYSQL* conn, int rowLimit, double* downloadMs
 
         int rowCount = 0;
         MYSQL_ROW row;
-        while ((row = mysql_fetch_row(res.get())) != nullptr && rowCount < rowLimit) {
+        while ((row = mysql_fetch_row(res.get())) != nullptr &&
+               (rowLimit <= 0 || rowCount < rowLimit)) {
             unsigned long* lengths = mysql_fetch_lengths(res.get());
             std::vector<std::string> rowData;
             rowData.reserve(nFields);

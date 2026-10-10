@@ -129,6 +129,11 @@ public:
 
     // Refresh a single table with full column/index/FK details.
     virtual Table describeTable(const std::string& tableName) = 0;
+    // the table's CREATE TABLE statement and its indexes, runnable as-is. the server's
+    // own DDL where it has one (MySQL, SQLite, DuckDB, Oracle, Redshift, Postgres
+    // catalog), else built from describeTable. throws Error (also where tables have
+    // no DDL: MongoDB, Redis)
+    virtual std::string tableDdl(const std::string& tableName);
 
     virtual QueryResult execute(const std::string& sql, int rowLimit = 1000) = 0;
 

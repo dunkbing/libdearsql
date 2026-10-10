@@ -27,6 +27,10 @@ public:
 
     [[nodiscard]] std::string createTable(const Table& table,
                                           const std::string& schemaPrefix = "") const;
+    // readable CREATE TABLE of a described table (defaults, keys, unique, foreign
+    // keys) plus its CREATE INDEX statements; IDatabase::tableDdl's fallback
+    [[nodiscard]] std::string tableDdl(const Table& table,
+                                       const std::string& schemaPrefix = "") const;
     // qualifiedTable is used verbatim (caller-formatted; e.g. quoteIdentifier or
     // pre-built "schema.table"). Backends apply their own dialect to the column.
     [[nodiscard]] virtual std::string addColumn(const std::string& qualifiedTable,

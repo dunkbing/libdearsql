@@ -258,3 +258,48 @@ TEST(SQLite, ListSequencesAfterAutoincrement) {
     ASSERT_EQ(seqs.size(), 1u);
     EXPECT_EQ(seqs[0], "t");
 }
+
+TEST(SQLite, TableDdlRoundTrips) {
+    auto conn = openMem();
+    auto db = conn->database();
+    ASSERT_TRUE(db->execute("CREATE TABLE parent (id INTEGER PRIMARY KEY);"
+                            "CREATE TABLE child (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                            "parent_id INTEGER REFERENCES parent(id), name TEXT NOT NULL "
+                            "DEFAULT 'x', UNIQUE (name));"
+                            "CREATE INDEX child_parent ON child (parent_id);",
+                            0)
+                    .success());
+    const auto ddl = db->tableDdl("child");
+    EXPECT_NE(ddl.find("CREATE TABLE child"), std::string::npos) << ddl;
+    EXPECT_NE(ddl.find("REFERENCES parent(id)"), std::string::npos) << ddl;
+    EXPECT_NE(ddl.find("CREATE INDEX child_parent"), std::string::npos) << ddl;
+    ASSERT_TRUE(db->execute("DROP TABLE child", 0).success());
+    ASSERT_TRUE(db->execute(ddl, 0).success()) << ddl;
+    EXPECT_EQ(db->describeTable("child").columns.size(), 3u);
+    EXPECT_THROW(db->tableDdl("missing"), Error);
+}
+
+TEST(SQLBuilder, TableDdlFallback) {
+    Table t{.name = "orders"};
+    t.columns = {{.name = "id", .type = "int", .isPrimaryKey = true, .isAutoIncrement = true},
+                 {.name = "user_id", .type = "int", .isNotNull = true},
+                 {.name = "code", .type = "varchar(10)", .defaultValue = "'a'"}};
+    t.indexes = {{.name = "orders_code", .columns = {"code"}, .isUnique = true},
+                 {.name = "orders_user", .columns = {"user_id"}}};
+    t.foreignKeys = {{.name = "fk_user",
+                      .sourceColumn = "user_id",
+                      .targetTable = "users",
+                      .targetColumn = "id",
+                      .onDelete = "CASCADE"}};
+    EXPECT_EQ(createSQLBuilder(DatabaseType::MSSQL)->tableDdl(t, "dbo"),
+              "CREATE TABLE [dbo].[orders] (\n"
+              "    [id] int IDENTITY(1,1),\n"
+              "    [user_id] int NOT NULL,\n"
+              "    [code] varchar(10) DEFAULT 'a',\n"
+              "    PRIMARY KEY ([id]),\n"
+              "    CONSTRAINT [orders_code] UNIQUE ([code]),\n"
+              "    CONSTRAINT [fk_user] FOREIGN KEY ([user_id]) REFERENCES [users] ([id]) "
+              "ON DELETE CASCADE\n"
+              ");\n"
+              "CREATE INDEX [orders_user] ON [dbo].[orders] ([user_id]);");
+}

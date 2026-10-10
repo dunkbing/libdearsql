@@ -10,6 +10,8 @@ Every backend is implemented and covered by the integration suite: SQLite, DuckD
 
 The shared API covers connection lifecycle, database/schema discovery, catalog loading (tables with columns, indexes, foreign keys in and out, sizes; views and materialized views with columns and definitions; sequences; routines), query execution (multi-statement, row limits, informational messages, client-side phase timings), table data paging, table/database DDL, row and column mutation, and dialect SQL via `createSQLBuilder(DatabaseType)`.
 
+`IDatabase::tableDdl(table)` returns the table's `CREATE TABLE` and its indexes as runnable SQL, for copying a schema elsewhere. The server's own DDL where it has one: MySQL/MariaDB `SHOW CREATE TABLE`, SQLite `sqlite_master`, DuckDB `duckdb_tables()` / `duckdb_indexes()`, Oracle `DBMS_METADATA` (no storage clauses), Redshift `SHOW TABLE`. PostgreSQL has no such function, so it is built from the catalog: `format_type` types, identity, generated and serial columns, every constraint through `pg_get_constraintdef`, indexes not backing a constraint through `pg_get_indexdef`, `PARTITION BY`, `UNLOGGED` and comments (inheritance, ownership and grants are not included). MSSQL and Cassandra use `ISQLBuilder::tableDdl` over `describeTable()`. Throws `Error` for an unknown table and on MongoDB and Redis.
+
 SQL completion (`include/dearsql/completion.hpp`) is pure and I/O-free: `complete(sql, cursor, catalog, type)` returns ranked items and the byte range they replace, `resolveIdentifierAt` maps an identifier to its table/column for hover, `statementRangeAt` finds the statement around an offset, and `sqlKeywords`/`sqlFunctions`/`quoteIdentifierIfNeeded` expose the per-dialect tables. It understands strings, comments, quoted identifiers and `$$` bodies, clause context, aliases, CTEs and derived tables. SQL dialects only; Redis and MongoDB return nothing, Cassandra gets CQL keywords.
 
 What a host gets for running work in parallel:
@@ -27,7 +29,7 @@ What the library leaves to its host: SSH tunnels, async/threads, pools, progress
 - Mutations return `Status = pair<bool, string>`.
 - `rowLimit <= 0` means unlimited.
 - SQL `NULL` comes back as `NULL_SENTINEL`, booleans as `BOOL_TRUE_SENTINEL` / `BOOL_FALSE_SENTINEL`, so a UI can tell them from the strings `"NULL"` / `"true"`.
-- `IDatabase` implements paging, counting and DDL (create/rename/drop/truncate table, add/rename/alter/drop column, drop view, insert/update/delete row) with the dialect builder over `execute()`, qualified by `schemaName()`; backends override only what their dialect cannot express in SQL (Mongo, Redis).
+- `IDatabase` implements paging, counting, reading a table's DDL (`tableDdl()`) and DDL (create/rename/drop/truncate table, add/rename/alter/drop column, drop view, insert/update/delete row) with the dialect builder over `execute()`, qualified by `schemaName()`; backends override only what their dialect cannot express in SQL (Mongo, Redis).
 - `ConnectionInfo::readOnly` opens SQLite and DuckDB read-only; server backends rely on the host refusing writes.
 - On server backends `IConnection::database()`, `openDatabase()`, `close()` and `dropDatabase()` may be called from different threads (the handle cache is locked); a single `IDatabase` serializes its own calls, except `cancel()`, which is meant to run concurrently.
 

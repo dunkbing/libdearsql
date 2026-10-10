@@ -180,3 +180,25 @@ TEST(MSSQL, CreateAndDropDatabase) {
     auto [okd, errd] = conn->dropDatabase(tmp);
     ASSERT_TRUE(okd) << errd;
 }
+
+TEST(MSSQL, TableDdlRoundTrips) {
+    OPEN_OR_SKIP(conn, st);
+    auto schema = dboSchema(conn, c->database);
+    ASSERT_TRUE(schema);
+    schema->execute("DROP TABLE IF EXISTS dbo.dearsql_ddl_t", 0);
+    ASSERT_TRUE(schema
+                    ->execute("CREATE TABLE dbo.dearsql_ddl_t (id INT IDENTITY(1,1) PRIMARY KEY, "
+                              "code NVARCHAR(12) NOT NULL, note VARCHAR(MAX), "
+                              "price DECIMAL(10,2) DEFAULT 0)",
+                              0)
+                    .success());
+    const auto ddl = schema->tableDdl("dearsql_ddl_t");
+    for (const char* part : {"CREATE TABLE [dbo].[dearsql_ddl_t]", "[code] nvarchar(12) NOT NULL",
+                             "[note] varchar(max)", "[price] decimal(10,2) DEFAULT ((0))",
+                             "IDENTITY(1,1)", "PRIMARY KEY ([id])"})
+        EXPECT_NE(ddl.find(part), std::string::npos) << part << "\n" << ddl;
+    ASSERT_TRUE(schema->execute("DROP TABLE dbo.dearsql_ddl_t", 0).success());
+    auto r = schema->execute(ddl, 0);
+    EXPECT_TRUE(r.success()) << r.errorMessage() << "\n" << ddl;
+    schema->execute("DROP TABLE IF EXISTS dbo.dearsql_ddl_t", 0);
+}

@@ -70,3 +70,17 @@ TEST(DuckDB, CatalogErrorsThrow) {
     auto db = openDuck()->database();
     EXPECT_THROW(db->getTableData(Table{.name = "missing"}, 10, 0), Error);
 }
+
+TEST(DuckDB, TableDdlRoundTrips) {
+    auto conn = openDuck();
+    auto db = conn->database();
+    ASSERT_TRUE(db->execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL); "
+                            "CREATE INDEX t_name ON t (name)",
+                            0)
+                    .success());
+    const auto ddl = db->tableDdl("t");
+    EXPECT_NE(ddl.find("CREATE TABLE t"), std::string::npos) << ddl;
+    EXPECT_NE(ddl.find("CREATE INDEX t_name"), std::string::npos) << ddl;
+    ASSERT_TRUE(db->execute("DROP TABLE t", 0).success());
+    ASSERT_TRUE(db->execute(ddl, 0).success()) << ddl;
+}

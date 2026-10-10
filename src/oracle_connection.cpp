@@ -310,6 +310,11 @@ QueryResult runQuery(dpiContext* ctx, dpiConn* conn, const std::string& query, i
             dpiQueryInfo qi;
             dpiStmt_getQueryInfo(raw, i, &qi);
             r.columnNames.emplace_back(qi.name, qi.nameLength);
+            // CLOBs as text (DBMS_METADATA, long columns), not lob locators
+            const auto ot = qi.typeInfo.oracleTypeNum;
+            if (ot == DPI_ORACLE_TYPE_CLOB || ot == DPI_ORACLE_TYPE_NCLOB)
+                dpiStmt_defineValue(raw, i, DPI_ORACLE_TYPE_LONG_VARCHAR, DPI_NATIVE_TYPE_BYTES,
+                                    0, 0, nullptr);
         }
         int found = 0;
         uint32_t bufIdx = 0;

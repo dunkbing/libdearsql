@@ -197,6 +197,87 @@ std::string ISQLBuilder::createTable(const Table& table, const std::string& sche
     return sql;
 }
 
+std::string ISQLBuilder::tableDdl(const Table& table, const std::string& schemaPrefix) const {
+    const auto dbType = databaseType();
+    const std::string qualified =
+        schemaPrefix.empty()
+            ? quoteIdentifier(table.name)
+            : std::format("{}.{}", quoteIdentifier(schemaPrefix), quoteIdentifier(table.name));
+    const auto quoteList = [&](const std::vector<std::string>& names) {
+        std::string out;
+        for (const auto& n : names)
+            out += (out.empty() ? "" : ", ") + quoteIdentifier(n);
+        return out;
+    };
+
+    std::vector<std::string> lines;
+    std::vector<std::string> pk;
+    for (const auto& col : table.columns) {
+        std::string line = std::format("{} {}", quoteIdentifier(col.name), col.type);
+        const bool sequenceDefault = col.defaultValue.starts_with("nextval(");
+        if (!col.defaultValue.empty() && !sequenceDefault)
+            line += " DEFAULT " + col.defaultValue;
+        if (col.isAutoIncrement && dbType != DatabaseType::POSTGRESQL &&
+            dbType != DatabaseType::REDSHIFT)
+            line += autoIncrementClause(dbType);
+        if (col.isNotNull && !col.isPrimaryKey && dbType != DatabaseType::CASSANDRA)
+            line += " NOT NULL";
+        if (col.isPrimaryKey)
+            pk.push_back(col.name);
+        lines.push_back(std::move(line));
+    }
+    if (!pk.empty())
+        lines.push_back(std::format("PRIMARY KEY ({})", quoteList(pk)));
+
+    // unique indexes become constraints, the rest CREATE INDEX after the table
+    std::vector<std::string> after;
+    for (const auto& idx : table.indexes) {
+        if (idx.isPrimary || idx.columns.empty())
+            continue;
+        if (idx.isUnique && dbType != DatabaseType::CASSANDRA) {
+            lines.push_back(std::format("CONSTRAINT {} UNIQUE ({})", quoteIdentifier(idx.name),
+                                        quoteList(idx.columns)));
+        } else {
+            after.push_back(std::format("CREATE INDEX {} ON {} ({});", quoteIdentifier(idx.name),
+                                        qualified, quoteList(idx.columns)));
+        }
+    }
+
+    // foreign keys come one row per column; group composite keys by name
+    std::vector<std::pair<std::string, std::vector<const ForeignKey*>>> fks;
+    for (const auto& fk : table.foreignKeys) {
+        auto it = std::ranges::find_if(
+            fks, [&](const auto& g) { return !fk.name.empty() && g.first == fk.name; });
+        if (it == fks.end())
+            fks.push_back({fk.name, {&fk}});
+        else
+            it->second.push_back(&fk);
+    }
+    for (const auto& [name, parts] : fks) {
+        std::vector<std::string> from, to;
+        for (const auto* p : parts) {
+            from.push_back(p->sourceColumn);
+            to.push_back(p->targetColumn);
+        }
+        std::string line = name.empty() ? "" : std::format("CONSTRAINT {} ", quoteIdentifier(name));
+        line += std::format("FOREIGN KEY ({}) REFERENCES {} ({})", quoteList(from),
+                            quoteIdentifier(parts.front()->targetTable), quoteList(to));
+        if (!parts.front()->onDelete.empty() && parts.front()->onDelete != "NO ACTION")
+            line += " ON DELETE " + parts.front()->onDelete;
+        if (!parts.front()->onUpdate.empty() && parts.front()->onUpdate != "NO ACTION")
+            line += " ON UPDATE " + parts.front()->onUpdate;
+        lines.push_back(std::move(line));
+    }
+
+    std::string sql = std::format("CREATE TABLE {} (\n", qualified);
+    for (size_t i = 0; i < lines.size(); ++i)
+        sql += "    " + lines[i] + (i + 1 < lines.size() ? ",\n" : "\n");
+    sql += ");";
+    for (const auto& a : after)
+        sql += "\n" + a;
+    return sql;
+}
+
 std::string ISQLBuilder::qualifiedName(const Table& table) const {
     if (table.schema.empty())
         return quoteIdentifier(table.name);

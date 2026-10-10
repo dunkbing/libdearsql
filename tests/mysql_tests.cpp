@@ -215,3 +215,22 @@ TEST(MySQL, CreateAndDropDatabase) {
     auto [okd, errd] = conn->dropDatabase(tmp);
     ASSERT_TRUE(okd) << errd;
 }
+
+TEST(MySQL, TableDdlRoundTrips) {
+    OPEN_OR_SKIP(conn, st);
+    auto db = conn->database(c->database);
+    ASSERT_TRUE(db);
+    db->execute("DROP TABLE IF EXISTS dearsql_ddl_t", 0);
+    ASSERT_TRUE(db->execute("CREATE TABLE dearsql_ddl_t (id INT AUTO_INCREMENT PRIMARY KEY, "
+                            "code VARCHAR(12) NOT NULL, KEY dearsql_ddl_code (code))",
+                            0)
+                    .success());
+    const auto ddl = db->tableDdl("dearsql_ddl_t");
+    EXPECT_NE(ddl.find("CREATE TABLE `dearsql_ddl_t`"), std::string::npos) << ddl;
+    EXPECT_NE(ddl.find("varchar(12)"), std::string::npos) << ddl;
+    EXPECT_NE(ddl.find("KEY `dearsql_ddl_code`"), std::string::npos) << ddl;
+    ASSERT_TRUE(db->execute("DROP TABLE dearsql_ddl_t", 0).success());
+    auto r = db->execute(ddl, 0);
+    EXPECT_TRUE(r.success()) << r.errorMessage();
+    db->execute("DROP TABLE IF EXISTS dearsql_ddl_t", 0);
+}
