@@ -101,6 +101,10 @@ add_library(libdearsql STATIC
 add_library(dearsql::dearsql ALIAS libdearsql)
 # target named libdearsql so a host can keep an executable called dearsql
 set_target_properties(libdearsql PROPERTIES OUTPUT_NAME dearsql)
+# windows.h min/max macros break std::min/std::max
+if(WIN32)
+    target_compile_definitions(libdearsql PRIVATE NOMINMAX)
+endif()
 
 target_include_directories(libdearsql
     PUBLIC
