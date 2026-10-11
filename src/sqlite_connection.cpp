@@ -44,7 +44,8 @@ std::string columnText(sqlite3_stmt* stmt, int col, bool sentinelNull = false) {
     if (sqlite3_column_type(stmt, col) == SQLITE_NULL)
         return sentinelNull ? std::string(NULL_SENTINEL) : "";
     const auto* text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
-    return text ? text : "";
+    // by length: BLOBs and text may hold NUL bytes
+    return text ? std::string(text, sqlite3_column_bytes(stmt, col)) : "";
 }
 
 template <typename RowCallback>
