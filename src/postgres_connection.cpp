@@ -24,6 +24,15 @@ namespace dearsql {
 
 namespace {
 
+// information_schema says USER-DEFINED for enums, domains and extension types
+// (postgis geometry, citext, vector) and ARRAY for arrays: ask format_type then
+constexpr const char* COLUMN_TYPE =
+    "CASE WHEN c.data_type IN ('USER-DEFINED', 'ARRAY') THEN ("
+    "SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_catalog.pg_attribute a "
+    "WHERE a.attrelid = (pg_catalog.quote_ident(c.table_schema) || '.' || "
+    "pg_catalog.quote_ident(c.table_name))::regclass AND a.attname = c.column_name) "
+    "ELSE c.data_type END";
+
 struct PgResultDeleter {
     void operator()(PGresult* r) const {
         if (r)
@@ -541,7 +550,7 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
 
     std::unordered_map<std::string, std::vector<Column>> cols;
     for (const auto& row : rows(std::format(
-             "SELECT c.table_name, c.column_name, c.data_type, c.is_nullable, "
+             "SELECT c.table_name, c.column_name, {}, c.is_nullable, "
              "CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 'true' ELSE 'false' END, "
              "CASE WHEN c.column_default LIKE 'nextval(%' OR c.is_identity = 'YES' "
              "  THEN 'true' ELSE 'false' END, "
@@ -555,7 +564,7 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
              "  AND tc.constraint_type = 'PRIMARY KEY' "
              "WHERE c.table_schema = {} AND c.table_name IN ({}) "
              "ORDER BY c.table_name, c.ordinal_position",
-             literal(schema), nameList))) {
+             COLUMN_TYPE, literal(schema), nameList))) {
         if (row.size() < 7)
             continue;
         Column c;
@@ -654,11 +663,11 @@ std::vector<Table> PostgresDatabase::viewsIn(const std::string& schema) {
     for (const auto& v : result)
         names.push_back(v.name);
     std::unordered_map<std::string, std::vector<Column>> cols;
-    for (const auto& row : rows(std::format("SELECT table_name, column_name, data_type, is_nullable "
-                                            "FROM information_schema.columns "
-                                            "WHERE table_schema = {} AND table_name IN ({}) "
-                                            "ORDER BY table_name, ordinal_position",
-                                            literal(schema), literalList(names)))) {
+    for (const auto& row : rows(std::format("SELECT c.table_name, c.column_name, {}, c.is_nullable "
+                                            "FROM information_schema.columns c "
+                                            "WHERE c.table_schema = {} AND c.table_name IN ({}) "
+                                            "ORDER BY c.table_name, c.ordinal_position",
+                                            COLUMN_TYPE, literal(schema), literalList(names)))) {
         if (row.size() < 4)
             continue;
         Column c;
@@ -767,12 +776,12 @@ Table PostgresDatabase::describeIn(const std::string& schema, const std::string&
     const std::string regclass = literal(quoteIdent(schema) + "." + quoteIdent(tableName));
 
     for (const auto& row : rows(std::format(
-             "SELECT column_name, data_type, is_nullable, COALESCE(column_default, ''), "
-             "CASE WHEN column_default LIKE 'nextval(%' OR is_identity = 'YES' "
+             "SELECT c.column_name, {}, c.is_nullable, COALESCE(c.column_default, ''), "
+             "CASE WHEN c.column_default LIKE 'nextval(%' OR c.is_identity = 'YES' "
              "  THEN 'true' ELSE 'false' END "
-             "FROM information_schema.columns "
-             "WHERE table_schema = {} AND table_name = {} ORDER BY ordinal_position",
-             schemaLit, tableLit))) {
+             "FROM information_schema.columns c "
+             "WHERE c.table_schema = {} AND c.table_name = {} ORDER BY c.ordinal_position",
+             COLUMN_TYPE, schemaLit, tableLit))) {
         if (row.size() < 5)
             continue;
         Column c;

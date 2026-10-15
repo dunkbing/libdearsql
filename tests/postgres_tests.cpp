@@ -119,6 +119,33 @@ TEST(Postgres, DescribeTable) {
     conn->database()->execute("DROP TABLE " + tbl);
 }
 
+TEST(Postgres, UserDefinedAndArrayTypesKeepTheirNames) {
+    OPEN_OR_SKIP(conn, st);
+    const std::string tbl = "dearsql_lib_pg_udt";
+    auto db = conn->database();
+    db->execute("DROP TABLE IF EXISTS " + tbl);
+    db->execute("DROP TYPE IF EXISTS dearsql_lib_mood");
+    db->execute("CREATE TYPE dearsql_lib_mood AS ENUM ('ok', 'sad')");
+    db->execute("CREATE TABLE " + tbl + " (id INT, mood dearsql_lib_mood, tags TEXT[])");
+
+    auto schema = publicSchema(conn);
+    ASSERT_TRUE(schema);
+    auto t = schema->describeTable(tbl);
+    ASSERT_EQ(t.columns.size(), 3u);
+    EXPECT_EQ(t.columns[0].type, "integer");
+    EXPECT_EQ(t.columns[1].type, "dearsql_lib_mood");
+    EXPECT_EQ(t.columns[2].type, "text[]");
+    for (const auto& listed : schema->tables()) {
+        if (listed.name == tbl) {
+            ASSERT_EQ(listed.columns.size(), 3u);
+            EXPECT_EQ(listed.columns[1].type, "dearsql_lib_mood");
+        }
+    }
+
+    db->execute("DROP TABLE " + tbl);
+    db->execute("DROP TYPE dearsql_lib_mood");
+}
+
 TEST(Postgres, GetTableDataAndRowCount) {
     OPEN_OR_SKIP(conn, st);
     const std::string tbl = "dearsql_lib_pg_data";
