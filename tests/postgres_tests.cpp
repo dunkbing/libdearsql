@@ -119,6 +119,36 @@ TEST(Postgres, DescribeTable) {
     conn->database()->execute("DROP TABLE " + tbl);
 }
 
+// tables() reads foreign keys from pg_constraint (#53): composite keys pair up by position
+TEST(Postgres, TableListForeignKeys) {
+    OPEN_OR_SKIP(conn, st);
+    auto db = conn->database();
+    db->execute("DROP TABLE IF EXISTS dearsql_lib_pg_fk_child, dearsql_lib_pg_fk_parent");
+    db->execute("CREATE TABLE dearsql_lib_pg_fk_parent (a INT, b INT, id INT UNIQUE, "
+                "PRIMARY KEY (a, b))");
+    db->execute(
+        "CREATE TABLE dearsql_lib_pg_fk_child (x INT, y INT, pid INT, "
+        "CONSTRAINT child_pair FOREIGN KEY (y, x) REFERENCES dearsql_lib_pg_fk_parent (a, b), "
+        "CONSTRAINT child_id FOREIGN KEY (pid) REFERENCES dearsql_lib_pg_fk_parent (id))");
+
+    auto schema = publicSchema(conn);
+    ASSERT_TRUE(schema);
+    std::vector<std::string> fks;
+    for (const auto& t : schema->tables())
+        if (t.name == "dearsql_lib_pg_fk_child")
+            for (const auto& fk : t.foreignKeys)
+                fks.push_back(fk.name + ":" + fk.sourceColumn + "->" + fk.targetTable + "." +
+                              fk.targetColumn);
+    std::ranges::sort(fks);
+    EXPECT_EQ(fks, (std::vector<std::string>{
+                       "child_id:pid->dearsql_lib_pg_fk_parent.id",
+                       "child_pair:x->dearsql_lib_pg_fk_parent.b",
+                       "child_pair:y->dearsql_lib_pg_fk_parent.a",
+                   }));
+
+    db->execute("DROP TABLE dearsql_lib_pg_fk_child, dearsql_lib_pg_fk_parent");
+}
+
 TEST(Postgres, UserDefinedAndArrayTypesKeepTheirNames) {
     OPEN_OR_SKIP(conn, st);
     const std::string tbl = "dearsql_lib_pg_udt";

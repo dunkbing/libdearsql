@@ -577,20 +577,42 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
         cols[row[0]].push_back(std::move(c));
     }
 
+    // pg_constraint, not information_schema: the information_schema join took
+    // 10s+ on ~800 tables (#53). redshift may lack this form, so it falls back
     std::unordered_map<std::string, std::vector<ForeignKey>> fks;
-    for (const auto& row : rows(std::format(
-             "SELECT tc.table_name, kcu.column_name, ccu.table_name, ccu.column_name, "
-             "tc.constraint_name "
-             "FROM information_schema.table_constraints tc "
-             "JOIN information_schema.key_column_usage kcu "
-             "  ON tc.constraint_name = kcu.constraint_name "
-             "  AND tc.table_schema = kcu.table_schema "
-             "JOIN information_schema.constraint_column_usage ccu "
-             "  ON ccu.constraint_name = tc.constraint_name "
-             "  AND ccu.table_schema = tc.table_schema "
-             "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = {} "
-             "AND tc.table_name IN ({}) ORDER BY tc.table_name",
-             literal(schema), nameList))) {
+    auto fkResult =
+        run(std::format("SELECT src.relname, sa.attname, tgt.relname, ta.attname, con.conname "
+                        "FROM pg_catalog.pg_constraint con "
+                        "JOIN pg_catalog.pg_class src ON src.oid = con.conrelid "
+                        "JOIN pg_catalog.pg_namespace n ON n.oid = src.relnamespace "
+                        "JOIN pg_catalog.pg_class tgt ON tgt.oid = con.confrelid "
+                        "  AND tgt.relnamespace = src.relnamespace "
+                        "JOIN generate_series(1, 32) i ON i <= array_length(con.conkey, 1) "
+                        "JOIN pg_catalog.pg_attribute sa "
+                        "  ON sa.attrelid = con.conrelid AND sa.attnum = con.conkey[i] "
+                        "JOIN pg_catalog.pg_attribute ta "
+                        "  ON ta.attrelid = con.confrelid AND ta.attnum = con.confkey[i] "
+                        "WHERE con.contype = 'f' AND n.nspname = {} AND src.relname IN ({}) "
+                        "ORDER BY src.relname, con.conname, i",
+                        literal(schema), nameList),
+            0, false);
+    auto fkRows =
+        fkResult.success() && !fkResult.empty()
+            ? std::move(fkResult[0].tableData)
+            : rows(std::format(
+                  "SELECT tc.table_name, kcu.column_name, ccu.table_name, ccu.column_name, "
+                  "tc.constraint_name "
+                  "FROM information_schema.table_constraints tc "
+                  "JOIN information_schema.key_column_usage kcu "
+                  "  ON tc.constraint_name = kcu.constraint_name "
+                  "  AND tc.table_schema = kcu.table_schema "
+                  "JOIN information_schema.constraint_column_usage ccu "
+                  "  ON ccu.constraint_name = tc.constraint_name "
+                  "  AND ccu.table_schema = tc.table_schema "
+                  "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = {} "
+                  "AND tc.table_name IN ({}) ORDER BY tc.table_name",
+                  literal(schema), nameList));
+    for (const auto& row : fkRows) {
         if (row.size() < 5)
             continue;
         ForeignKey fk;
