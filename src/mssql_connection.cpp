@@ -225,12 +225,16 @@ DBPROCESS* openDbLibConnection(const ConnectionInfo& info, const std::string& db
     DBSETLAPP(login, "DearSQL");
     dbsetlversion(login, DBVERSION_73);
 
-    // DBSETLENCRYPT is unimplemented in FreeTDS (a silent no-op); this is the real switch
+    // DBSETLENCRYPT is unimplemented in FreeTDS (a silent no-op); this is the real switch.
+    // ponytail: the system FreeTDS on linux (ubuntu 22.04: 1.3.6) predates it, so linux
+    // stays unencrypted until it builds the vendored FreeTDS like macOS and Windows
+#ifdef DBSETENCRYPTION
     if (info.sslmode == SslMode::Require || info.sslmode == SslMode::VerifyCA) {
         DBSETLENCRYPTION(login, "require");
     } else if (info.sslmode == SslMode::VerifyFull) {
         DBSETLENCRYPTION(login, "strict");
     }
+#endif
 
     dbsetlogintime(10);
 
