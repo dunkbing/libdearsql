@@ -202,3 +202,22 @@ TEST(MSSQL, TableDdlRoundTrips) {
     EXPECT_TRUE(r.success()) << r.errorMessage() << "\n" << ddl;
     schema->execute("DROP TABLE IF EXISTS dbo.dearsql_ddl_t", 0);
 }
+
+// "Encrypt" really encrypts (#11): DBSETLENCRYPT was a silent no-op in FreeTDS
+TEST(MSSQL, EncryptModeEncryptsTheSession) {
+    OPEN_OR_SKIP(plain, st);
+    ConnectionInfo info = plain->info();
+    info.sslmode = SslMode::Require;
+    auto conn = makeConnection(info);
+    ASSERT_TRUE(conn);
+    auto opened = conn->open();
+    ASSERT_TRUE(opened.first) << opened.second;
+    const std::string sql =
+        "SELECT encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID";
+    auto r = conn->database()->execute(sql);
+    ASSERT_TRUE(r.success()) << r.errorMessage();
+    EXPECT_EQ(r[0].tableData.at(0).at(0), "TRUE");
+    auto off = plain->database()->execute(sql);
+    ASSERT_TRUE(off.success()) << off.errorMessage();
+    EXPECT_EQ(off[0].tableData.at(0).at(0), "FALSE");
+}

@@ -225,9 +225,11 @@ DBPROCESS* openDbLibConnection(const ConnectionInfo& info, const std::string& db
     DBSETLAPP(login, "DearSQL");
     dbsetlversion(login, DBVERSION_73);
 
-    if (info.sslmode == SslMode::Require || info.sslmode == SslMode::VerifyCA ||
-        info.sslmode == SslMode::VerifyFull) {
-        DBSETLENCRYPT(login, TRUE);
+    // DBSETLENCRYPT is unimplemented in FreeTDS (a silent no-op); this is the real switch
+    if (info.sslmode == SslMode::Require || info.sslmode == SslMode::VerifyCA) {
+        DBSETLENCRYPTION(login, "require");
+    } else if (info.sslmode == SslMode::VerifyFull) {
+        DBSETLENCRYPTION(login, "strict");
     }
 
     dbsetlogintime(10);
