@@ -277,8 +277,13 @@ public:
     }
 
     void close() {
+        // cache_ is guarded by cacheMu_; a databases() call may be running
+        decltype(cache_) old;
+        {
+            std::lock_guard cacheLock(cacheMu_);
+            old.swap(cache_);
+        }
         std::lock_guard lock(mu_);
-        cache_.clear();
         // a catalog query still running elsewhere holds its own reference
         state_.reset();
         activeKeyspace_.clear();
