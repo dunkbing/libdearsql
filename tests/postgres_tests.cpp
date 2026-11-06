@@ -1,4 +1,5 @@
 #include "test_helpers.hpp"
+#include <algorithm>
 
 using namespace dearsql;
 using namespace dearsql::testing;
