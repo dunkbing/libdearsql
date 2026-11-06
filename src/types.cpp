@@ -1,5 +1,6 @@
 #include "dearsql/types.hpp"
 #include <format>
+#include <unordered_map>
 
 namespace dearsql {
 
