@@ -205,9 +205,6 @@ TEST(MSSQL, TableDdlRoundTrips) {
 
 // "Encrypt" really encrypts (#11): DBSETLENCRYPT was a silent no-op in FreeTDS
 TEST(MSSQL, EncryptModeEncryptsTheSession) {
-#ifdef __linux__
-    GTEST_SKIP() << "linux links the system FreeTDS, which predates DBSETENCRYPTION";
-#endif
     OPEN_OR_SKIP(plain, st);
     ConnectionInfo info = plain->info();
     info.sslmode = SslMode::Require;
@@ -223,4 +220,14 @@ TEST(MSSQL, EncryptModeEncryptsTheSession) {
     auto off = plain->database()->execute(sql);
     ASSERT_TRUE(off.success()) << off.errorMessage();
     EXPECT_EQ(off[0].tableData.at(0).at(0), "FALSE");
+}
+
+// "Encrypt + Verify" checks the certificate: the test server's is self-signed
+TEST(MSSQL, VerifyModeRefusesAnUntrustedCertificate) {
+    OPEN_OR_SKIP(plain, st);
+    ConnectionInfo info = plain->info();
+    info.sslmode = SslMode::VerifyCA;
+    auto conn = makeConnection(info);
+    ASSERT_TRUE(conn);
+    EXPECT_FALSE(conn->open().first);
 }

@@ -41,7 +41,7 @@ Backend extras, on the concrete classes:
 | MySQL | `MySQLDatabase::handle()` (`MYSQL*`) for session-scoped work such as dump import/export, `ping()` |
 | Redis | `RedisConnection::databaseInfo()` (keys/expires/avg TTL per logical db; db count inferred when `CONFIG GET databases` is refused), `selectedDatabase()`, key helpers |
 | Oracle | each schema handle has its own session with `CURRENT_SCHEMA` set; `dearsql::oracle` installer: `install(onProgress, shouldCancel)`, `setInstallRoot(dir)`, `setClientOptions({autoInstall, reexecForLibraryPath})`, `needsClientInstall()`, `resetContext()` |
-| MSSQL | `PRINT` / `RAISERROR` (severity ≤ 10) in `QueryResult::messages`; system databases hidden |
+| MSSQL | `PRINT` / `RAISERROR` (severity ≤ 10) in `QueryResult::messages`; system databases hidden; `sslmode` Require encrypts, VerifyCA also checks the certificate and hostname against `sslCACertPath` (or the system store), VerifyFull is TDS 8.0 strict with the same checks |
 | Cassandra | keyspace switch and query under one lock, so concurrent handles never interleave a `USE`; catalog queries hold a reference to the session, so a `close()` from another thread frees it only once they finish |
 
 ## Build
@@ -124,7 +124,7 @@ libdearsql/
 ├── CMakeLists.txt
 ├── vcpkg.json                   # manifest with per-backend features
 ├── cmake/
-│   ├── FreeTDS.cmake            # builds db-lib for MSSQL (system libsybdb on linux)
+│   ├── FreeTDS.cmake            # builds db-lib for MSSQL from the submodule
 │   ├── OracleOCI.cmake          # builds ODPI-C
 │   └── CassandraDriver.cmake    # builds DataStax driver
 ├── external/                    # vendored submodules (only when needed)
