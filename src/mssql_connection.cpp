@@ -215,6 +215,18 @@ QueryResult executeQueryOnProcess(DBPROCESS* dbproc, const std::string& query, i
     return result;
 }
 
+// FreeTDS's own option parser, the one DBSETLENCRYPTION goes through
+extern "C" bool tds_parse_conf_section(const char* option, const char* value, void* login);
+
+// db-lib has no setter for the CA file. ponytail: LOGINREC begins with its TDSLOGIN*
+// (struct tds_dblib_loginrec, dblib.h in the pinned FreeTDS 1.5.14); recheck on upgrade
+bool setTdsOption(LOGINREC* login, const char* option, const char* value) {
+    struct DblibLogin {
+        void* tdsLogin;
+    };
+    return tds_parse_conf_section(option, value, reinterpret_cast<DblibLogin*>(login)->tdsLogin);
+}
+
 DBPROCESS* openDbLibConnection(const ConnectionInfo& info, const std::string& dbName) {
     LOGINREC* login = dblogin();
     if (!login)
@@ -225,16 +237,21 @@ DBPROCESS* openDbLibConnection(const ConnectionInfo& info, const std::string& db
     DBSETLAPP(login, "DearSQL");
     dbsetlversion(login, DBVERSION_73);
 
-    // DBSETLENCRYPT is unimplemented in FreeTDS (a silent no-op); this is the real switch.
-    // ponytail: the system FreeTDS on linux (ubuntu 22.04: 1.3.6) predates it, so linux
-    // stays unencrypted until it builds the vendored FreeTDS like macOS and Windows
-#ifdef DBSETENCRYPTION
+    // DBSETLENCRYPT is unimplemented in FreeTDS (a silent no-op); this is the real switch
     if (info.sslmode == SslMode::Require || info.sslmode == SslMode::VerifyCA) {
         DBSETLENCRYPTION(login, "require");
     } else if (info.sslmode == SslMode::VerifyFull) {
         DBSETLENCRYPTION(login, "strict");
     }
-#endif
+    // FreeTDS checks the certificate only with a CA file ("system" = the OS store)
+    if (info.sslmode == SslMode::VerifyCA || info.sslmode == SslMode::VerifyFull) {
+        const char* ca = info.sslCACertPath.empty() ? "system" : info.sslCACertPath.c_str();
+        if (!setTdsOption(login, "ca file", ca) ||
+            !setTdsOption(login, "check certificate hostname", "yes")) {
+            dbloginfree(login);
+            throw Error("MSSQL: could not set the certificate checks");
+        }
+    }
 
     dbsetlogintime(10);
 

@@ -3,21 +3,46 @@
 # Sets: SYBDB_LIBRARY, SYBDB_INCLUDE_DIR, SYBDB_DEPS
 
 if(LINUX)
-  find_library(SYBDB_LIBRARY NAMES libsybdb.a sybdb REQUIRED)
-  find_path(SYBDB_INCLUDE_DIR sybdb.h REQUIRED)
-  # transitive deps of static libsybdb.a (TLS, crypto, Kerberos)
-  find_library(GNUTLS_LIBRARY gnutls REQUIRED)
-  find_library(NETTLE_LIBRARY nettle REQUIRED)
-  find_library(HOGWEED_LIBRARY hogweed REQUIRED)
-  find_library(GMP_LIBRARY gmp REQUIRED)
-  find_library(GSSAPI_LIBRARY gssapi_krb5 REQUIRED)
-  set(SYBDB_DEPS
-        ${GNUTLS_LIBRARY}
-        ${NETTLE_LIBRARY}
-        ${HOGWEED_LIBRARY}
-        ${GMP_LIBRARY}
-        ${GSSAPI_LIBRARY}
+  # build FreeTDS db-lib from the submodule against vcpkg's OpenSSL: distro
+  # packages lag (ubuntu 22.04 ships 1.3.6, which has no encryption setting)
+  include(ExternalProject)
+  set(FREETDS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/freetds")
+  set(FREETDS_BINARY_DIR "${CMAKE_BINARY_DIR}/freetds-build")
+  get_target_property(_OPENSSL_SSL_LOC OpenSSL::SSL IMPORTED_LOCATION)
+  if(NOT _OPENSSL_SSL_LOC)
+    get_target_property(_OPENSSL_SSL_LOC OpenSSL::SSL IMPORTED_LOCATION_RELEASE)
+  endif()
+  get_filename_component(_VCPKG_OPENSSL_LIB_DIR "${_OPENSSL_SSL_LOC}" DIRECTORY)
+  get_filename_component(_VCPKG_OPENSSL_ROOT "${_VCPKG_OPENSSL_LIB_DIR}" DIRECTORY)
+  set(_FREETDS_LIBS
+        "${FREETDS_BINARY_DIR}/src/dblib/libdb-lib.a"
+        "${FREETDS_BINARY_DIR}/src/tds/libtds.a"
+        "${FREETDS_BINARY_DIR}/src/replacements/libreplacements.a"
+        "${FREETDS_BINARY_DIR}/src/utils/libtdsutils.a"
     )
+  ExternalProject_Add(
+        freetds_external
+        SOURCE_DIR "${FREETDS_SOURCE_DIR}"
+        BINARY_DIR "${FREETDS_BINARY_DIR}"
+        CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+            -DOPENSSL_ROOT_DIR=${_VCPKG_OPENSSL_ROOT}
+            -DOPENSSL_USE_STATIC_LIBS=ON
+        # only the static db-lib and what it depends on
+        BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target db-lib
+        INSTALL_COMMAND ""
+        BUILD_BYPRODUCTS ${_FREETDS_LIBS}
+    )
+  add_library(freetds_sybdb INTERFACE)
+  add_dependencies(freetds_sybdb freetds_external)
+  # db-lib first: the linker resolves left to right
+  target_link_libraries(freetds_sybdb INTERFACE ${_FREETDS_LIBS} OpenSSL::SSL OpenSSL::Crypto)
+  set(SYBDB_LIBRARY freetds_sybdb)
+  # public headers from the source tree, plus the generated tds_sysdep_public.h
+  set(SYBDB_INCLUDE_DIR "${FREETDS_SOURCE_DIR}/include" "${FREETDS_BINARY_DIR}/include")
+  set(SYBDB_DEPS "")
 elseif(WIN32)
   # build FreeTDS db-lib from submodule (vcpkg freetds conflicts with
   # libmariadb)

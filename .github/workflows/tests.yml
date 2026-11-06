@@ -52,10 +52,9 @@ jobs:
             build-essential cmake ninja-build pkg-config \
             libtirpc-dev libltdl-dev python3-venv \
             autoconf automake autoconf-archive \
-            freetds-dev libgnutls28-dev libkrb5-dev libgssapi-krb5-2 \
-            libnettle8 libhogweed6 libgmp10 \
+            libkrb5-dev libgssapi-krb5-2 \
             netcat-openbsd jq unzip zstd
-          # Linux uses system FreeTDS like the app; vcpkg libpq + mariadb +
+          # FreeTDS builds from the submodule; vcpkg libpq + mariadb +
           # hiredis + mongo-cxx + openssl handle the rest.
 
       - name: Setup vcpkg

@@ -59,7 +59,7 @@ libdearsql/
 ├── README.md                      — user-facing
 ├── CLAUDE.md                      — this file
 ├── cmake/
-│   ├── FreeTDS.cmake              — builds db-lib for MSSQL (or uses system libsybdb on Linux)
+│   ├── FreeTDS.cmake              — builds db-lib for MSSQL from the submodule, every platform
 │   ├── OracleOCI.cmake            — builds ODPI-C
 │   └── CassandraDriver.cmake      — builds DataStax C++ driver
 ├── external/                      — vendored submodules
