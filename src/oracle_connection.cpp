@@ -655,7 +655,6 @@ std::vector<Table> OracleDatabase::tables() {
             t.foreignKeys = std::move(it->second);
         if (auto it = idx.find(tn); it != idx.end())
             t.indexes = std::move(it->second);
-        buildForeignKeyLookup(t);
         result.push_back(std::move(t));
     }
     populateIncomingForeignKeys(result);
@@ -743,7 +742,6 @@ Table OracleDatabase::describeTable(const std::string& tableName) {
     auto idx = indexes(tableName);
     if (auto it = idx.find(tableName); it != idx.end())
         t.indexes = std::move(it->second);
-    buildForeignKeyLookup(t);
     return t;
 }
 

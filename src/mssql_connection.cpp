@@ -454,7 +454,6 @@ std::vector<Table> loadTablesForSchema(IDatabase& db, const std::string& schema)
             t.foreignKeys = std::move(it->second);
         if (auto it = tableIndexes.find(tn); it != tableIndexes.end())
             t.indexes = std::move(it->second);
-        buildForeignKeyLookup(t);
         result.push_back(std::move(t));
     }
     populateIncomingForeignKeys(result);
@@ -634,7 +633,6 @@ Table describeTableInSchema(IDatabase& db, const std::string& schema,
         t.indexes.back().columns.push_back(row[2]);
     }
 
-    buildForeignKeyLookup(t);
     return t;
 }
 

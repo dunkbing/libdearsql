@@ -3,12 +3,6 @@
 
 namespace dearsql {
 
-void buildForeignKeyLookup(Table& table) {
-    table.foreignKeysByColumn.clear();
-    for (const auto& fk : table.foreignKeys)
-        table.foreignKeysByColumn[fk.sourceColumn] = fk;
-}
-
 void populateIncomingForeignKeys(std::vector<Table>& tables) {
     std::unordered_map<std::string, Table*> lookup;
     lookup.reserve(tables.size());
@@ -26,6 +20,15 @@ void populateIncomingForeignKeys(std::vector<Table>& tables) {
             it->second->incomingForeignKeys.push_back(std::move(incoming));
         }
     }
+    // lists grow one push_back at a time; a catalog of thousands of tables otherwise
+    // keeps up to 2x its size in spare capacity
+    for (auto& t : tables) {
+        t.columns.shrink_to_fit();
+        t.indexes.shrink_to_fit();
+        t.foreignKeys.shrink_to_fit();
+        t.incomingForeignKeys.shrink_to_fit();
+    }
+    tables.shrink_to_fit();
 }
 
 std::string formatByteSize(int64_t bytes) {

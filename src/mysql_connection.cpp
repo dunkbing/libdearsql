@@ -393,7 +393,6 @@ std::vector<Table> MySQLDatabase::tables() {
         }
         drainExtraResults(conn_);
 
-        buildForeignKeyLookup(table);
         result.push_back(std::move(table));
     }
 
@@ -605,7 +604,6 @@ Table MySQLDatabase::describeTable(const std::string& tableName) {
     }
     drainExtraResults(conn_);
 
-    buildForeignKeyLookup(refreshedTable);
     return refreshedTable;
 }
 

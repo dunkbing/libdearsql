@@ -229,7 +229,6 @@ Table SQLiteDatabaseNode::load(const std::string& tn, bool isView) {
     }
     t.indexes = std::move(indexes);
     t.sizeBytes = getTableSizeBytes(db, tn);
-    buildForeignKeyLookup(t);
     return t;
 }
 
