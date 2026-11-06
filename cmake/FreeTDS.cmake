@@ -2,6 +2,27 @@
 #
 # Sets: SYBDB_LIBRARY, SYBDB_INCLUDE_DIR, SYBDB_DEPS
 
+# db-lib drops the login's CA file when it builds the connection (tds_config_login,
+# FreeTDS 1.5.14), so a "ca file" set on the login never reaches the TLS setup.
+# patch the pinned submodule once; drop this when upstream copies cafile there
+find_package(Git REQUIRED)
+set(_FREETDS_PATCH "${CMAKE_CURRENT_LIST_DIR}/freetds-login-cafile.patch")
+set(_FREETDS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/external/freetds")
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_FREETDS_PATCH}"
+    WORKING_DIRECTORY "${_FREETDS_SRC}"
+    RESULT_VARIABLE _FREETDS_PATCHED
+    OUTPUT_QUIET ERROR_QUIET)
+if(NOT _FREETDS_PATCHED EQUAL 0)
+  execute_process(
+      COMMAND "${GIT_EXECUTABLE}" apply "${_FREETDS_PATCH}"
+      WORKING_DIRECTORY "${_FREETDS_SRC}"
+      RESULT_VARIABLE _FREETDS_PATCH_RC)
+  if(NOT _FREETDS_PATCH_RC EQUAL 0)
+    message(FATAL_ERROR "could not apply ${_FREETDS_PATCH}")
+  endif()
+endif()
+
 if(LINUX)
   # build FreeTDS db-lib from the submodule against vcpkg's OpenSSL: distro
   # packages lag (ubuntu 22.04 ships 1.3.6, which has no encryption setting)

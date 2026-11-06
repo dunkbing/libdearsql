@@ -1,0 +1,17 @@
+diff --git a/src/tds/config.c b/src/tds/config.c
+index 2bd23c7e1..0d8281b3a 100644
+--- a/src/tds/config.c
++++ b/src/tds/config.c
+@@ -810,6 +810,12 @@ tds_config_login(TDSLOGIN * connection, TDSLOGIN * login)
+ 	if (res && !tds_dstr_isempty(&login->openssl_ciphers))
+ 		res = tds_dstr_dup(&connection->openssl_ciphers, &login->openssl_ciphers);
+ 
++	if (res && !tds_dstr_isempty(&login->cafile))
++		res = tds_dstr_dup(&connection->cafile, &login->cafile);
++
++	if (res && !tds_dstr_isempty(&login->crlfile))
++		res = tds_dstr_dup(&connection->crlfile, &login->crlfile);
++
+ 	if (res && !tds_dstr_isempty(&login->server_spn))
+ 		res = tds_dstr_dup(&connection->server_spn, &login->server_spn);
+ 

@@ -1,6 +1,7 @@
 [submodule "external/freetds"]
 	path = external/freetds
 	url = https://github.com/FreeTDS/freetds.git
+	ignore = dirty
 [submodule "external/odpi"]
 	path = external/odpi
 	url = https://github.com/oracle/odpi.git
