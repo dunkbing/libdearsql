@@ -110,7 +110,6 @@ TEST(SQLite, ListTablesAndViewsAndColumns) {
     EXPECT_EQ(orders->foreignKeys[0].sourceColumn, "user_id");
     EXPECT_EQ(orders->foreignKeys[0].targetTable, "users");
     EXPECT_EQ(orders->foreignKeys[0].targetColumn, "id");
-    EXPECT_FALSE(orders->foreignKeysByColumn.empty());
     EXPECT_FALSE(users->incomingForeignKeys.empty());
 
     auto views = db->views();

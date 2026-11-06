@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace dearsql {
@@ -66,7 +65,6 @@ struct Table {
     std::vector<Index> indexes;
     std::vector<ForeignKey> foreignKeys;
     std::vector<ForeignKey> incomingForeignKeys;
-    std::unordered_map<std::string, ForeignKey> foreignKeysByColumn;
 
     int64_t sizeBytes = -1; // -1 if unknown
 };
@@ -80,10 +78,8 @@ struct Routine {
     std::string returnType;
 };
 
-// build foreignKeysByColumn lookup from foreignKeys
-void buildForeignKeyLookup(Table& table);
-
-// populate incomingForeignKeys on each table based on cross-references
+// populate incomingForeignKeys on each table based on cross-references, then trim
+// the lists' spare capacity
 void populateIncomingForeignKeys(std::vector<Table>& tables);
 
 std::string formatByteSize(int64_t bytes);

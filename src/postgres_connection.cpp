@@ -657,7 +657,6 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
             t.foreignKeys = std::move(it->second);
         if (auto it = sizes.find(tn); it != sizes.end())
             t.sizeBytes = it->second;
-        buildForeignKeyLookup(t);
         result.push_back(std::move(t));
     }
     populateIncomingForeignKeys(result);
@@ -873,7 +872,6 @@ Table PostgresDatabase::describeIn(const std::string& schema, const std::string&
         fk.name = row[3];
         t.foreignKeys.push_back(std::move(fk));
     }
-    buildForeignKeyLookup(t);
 
     // Redshift has no pg_total_relation_size; size is optional
     auto size = run(std::format("SELECT pg_total_relation_size({}::regclass)", regclass), 1, false);

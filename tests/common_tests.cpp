@@ -130,14 +130,14 @@ TEST(ForeignKeyLookup, BuildAndPopulate) {
     fk.targetColumn = "id";
     child.foreignKeys.push_back(fk);
 
-    buildForeignKeyLookup(child);
-    ASSERT_TRUE(child.foreignKeysByColumn.count("user_id"));
-    EXPECT_EQ(child.foreignKeysByColumn.at("user_id").targetTable, "users");
-
     std::vector<Table> tables{parent, child};
     populateIncomingForeignKeys(tables);
     EXPECT_EQ(tables[0].incomingForeignKeys.size(), 1u);
     EXPECT_EQ(tables[0].incomingForeignKeys.front().sourceColumn, "user_id");
+    for (const auto& t : tables) {
+        EXPECT_EQ(t.columns.capacity(), t.columns.size());
+        EXPECT_EQ(t.foreignKeys.capacity(), t.foreignKeys.size());
+    }
 }
 
 TEST(ByteFormatting, HumanReadable) {

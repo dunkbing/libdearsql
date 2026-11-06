@@ -255,7 +255,6 @@ Table DuckDBDatabaseNode::load(const std::string& tableName, bool isView) {
             t.foreignKeys.push_back(std::move(fk));
         }
     }
-    buildForeignKeyLookup(t);
     return t;
 }
 
