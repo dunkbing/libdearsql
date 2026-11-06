@@ -25,7 +25,7 @@ jobs:
     # Hard cap on the whole run. Cold builds with vcpkg + 8-service docker
     # stack come in around 25 min; 45 min leaves headroom while still
     # protecting against runaway hangs.
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
