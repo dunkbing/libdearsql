@@ -52,7 +52,7 @@ jobs:
             build-essential cmake ninja-build pkg-config \
             libtirpc-dev libltdl-dev python3-venv \
             autoconf automake autoconf-archive \
-            libkrb5-dev libgssapi-krb5-2 \
+            libkrb5-dev libgssapi-krb5-2 gperf \
             netcat-openbsd jq unzip zstd
           # FreeTDS builds from the submodule; vcpkg libpq + mariadb +
           # hiredis + mongo-cxx + openssl handle the rest.
