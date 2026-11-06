@@ -62,7 +62,7 @@ jobs:
         timeout-minutes: 10
         with:
           # Pin to the same baseline as vcpkg.json's builtin-baseline.
-          vcpkgGitCommitId: "77df67cfff9c12ccfdb52284e07c87c75092f723"
+          vcpkgGitCommitId: "30ef65cad98f08e7197c9a1656fbd871bcb72f2d"
 
       # Cache the resolved vcpkg_installed tree as well — even with x-gha
       # binary cache this saves a few minutes on cold runs.
