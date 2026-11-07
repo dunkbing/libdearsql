@@ -118,6 +118,18 @@ if (auto id = dearsql::resolveIdentifierAt(sql, 7, catalog, dearsql::DatabaseTyp
 
 The catalog is a plain value: build it once from whatever the host has loaded (tables and views with columns, sequences, routines) and rebuild when that changes. `complete()` filters by the text typed so far (exact-case prefix, prefix, word boundary, substring, then subsequence for catalog names), drops an item equal to the typed word, dedupes and sorts. `insertText` is quoted for the dialect when a name needs it and qualified with its schema when that is not `defaultSchema`. Tests: `tests/completion_tests.cpp` (no database needed).
 
+## Syntax checks
+
+```cpp
+#include <dearsql/syntax.hpp>
+
+if (auto err = dearsql::checkSyntax(sql, type)) {
+    // err->message as the engine words it, err->offset a byte offset into sql
+}
+```
+
+Each engine's own parser, so a valid statement is never flagged: PostgreSQL through [libpg_query](https://github.com/pganalyze/libpg_query) (the server's grammar, vendored in `external/libpg_query` and built by `cmake/PgQuery.cmake`), SQLite by preparing against an empty in-memory database (only syntax errors count, not "no such table"), DuckDB through its parser. Other engines have no parser outside their server and are never checked (`hasSyntaxCheck` is false). libpg_query carries copies of postgres internals that libpq's pgcommon/pgport and libmariadb also define, so its build force-includes `cmake/pg_query_prefix.h`, which renames every global symbol but the `pg_query_*` api; regenerate it after bumping the submodule (instructions in the file). Tests: `tests/syntax_tests.cpp`.
+
 ## Query plans
 
 ```cpp
@@ -152,6 +164,7 @@ libdearsql/
 │   ├── types.hpp                # Column, Index, ForeignKey, Routine, Table
 │   ├── completion.hpp           # sql completion + identifier resolution (pure)
 │   ├── explain.hpp              # explain statements + plan parsing (pure)
+│   ├── syntax.hpp               # syntax checks with each engine's parser
 │   ├── query_result.hpp         # StatementResult, QueryResult
 │   ├── sql_builder.hpp          # dialect quoting + SQL generation
 │   ├── connection_info.hpp      # DatabaseType, SslMode, ConnectionInfo
@@ -182,6 +195,7 @@ libdearsql/
     ├── common_tests.cpp
     ├── completion_tests.cpp     # pure, no database
     ├── explain_tests.cpp        # plan parsers on fixtures, no database
+    ├── syntax_tests.cpp         # parser checks, no database
     ├── sqlite_tests.cpp
     └── *_tests.cpp              # per backend, skip without DEARSQL_TEST_* env
 ```

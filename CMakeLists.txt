@@ -76,6 +76,7 @@ find_package(httplib CONFIG REQUIRED)
 if(NOT TARGET nlohmann_json::nlohmann_json)
     find_package(nlohmann_json CONFIG REQUIRED)
 endif()
+include(cmake/PgQuery.cmake)
 find_package(DuckDB CONFIG QUIET)
 
 # vendored drivers: freetds_sybdb (or system libsybdb on linux), odpi, cassandra_static
@@ -88,6 +89,7 @@ add_library(libdearsql STATIC
     src/types.cpp
     src/completion.cpp
     src/explain.cpp
+    src/syntax.cpp
     src/database.cpp
     src/connection_info.cpp
     src/sql_builder.cpp
@@ -133,6 +135,7 @@ target_link_libraries(libdearsql
     PRIVATE
         httplib::httplib
         nlohmann_json::nlohmann_json
+        pg_query
 )
 
 if(DuckDB_FOUND)

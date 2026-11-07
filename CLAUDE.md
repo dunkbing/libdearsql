@@ -44,6 +44,12 @@ the `IDatabase` calls, deciding when to rebuild it, and all rendering. Keep it
 I/O-free and allocation-light (it runs per keystroke); new SQL-language tooling
 (hover, signature help) belongs next to it.
 
+Syntax checks too: `include/dearsql/syntax.hpp` / `src/syntax.cpp` run the engine's own
+parser (libpg_query for Postgres, sqlite3 prepare on an empty `:memory:` db, DuckDB's
+parser) and never guess for engines without one. libpg_query is vendored and built by
+`cmake/PgQuery.cmake` with every non-api symbol renamed (`cmake/pg_query_prefix.h`,
+generated) so it links next to libpq and libmariadb.
+
 Query plans are the same kind of thing: `include/dearsql/explain.hpp` / `src/explain.cpp`
 build the EXPLAIN statement per dialect (`explainSql`) and parse what the server
 returns into one `PlanNode` tree (`parsePlan`): Postgres JSON, MySQL `FORMAT=TREE`
@@ -73,12 +79,14 @@ libdearsql/
 ├── external/                      — vendored submodules
 │   ├── freetds/                   — pinned v1.5.14
 │   ├── odpi/                      — pinned v5.6.4
+│   ├── libpg_query/               — pinned 17-6.2.5 (postgres parser)
 │   └── cassandra-cpp-driver/      — pinned 2.17.1
 ├── include/dearsql/
 │   ├── dearsql.hpp                — umbrella
 │   ├── types.hpp / query_result.hpp / connection_info.hpp / database.hpp / factory.hpp
 │   ├── completion.hpp             — pure sql completion + identifier resolution
 │   ├── explain.hpp                — explain statements + plan parsing (pure)
+│   ├── syntax.hpp                 — syntax checks with each engine's parser
 │   └── backends/                  — one header per backend
 ├── src/
 │   ├── types.cpp / connection_info.cpp / factory.cpp
@@ -132,6 +140,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | Common        | 7     | type/helper unit tests                                 |
 | Completion    | 17    | pure: contexts, scopes, quoting, dialects, resolve     |
 | Explain       | 6     | pure: postgres json, mysql tree, sqlite plan rows      |
+| Syntax        | 5     | pg, sqlite, duckdb parsers; none for the rest          |
 
 ## Build
 

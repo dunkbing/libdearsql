@@ -5,6 +5,7 @@
 #include "connection_info.hpp"
 #include "database.hpp"
 #include "explain.hpp"
+#include "syntax.hpp"
 #include "factory.hpp"
 #include "query_result.hpp"
 #include "sql_builder.hpp"
