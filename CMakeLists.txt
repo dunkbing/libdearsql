@@ -73,6 +73,9 @@ find_package(hiredis_ssl CONFIG QUIET)
 find_package(mongocxx CONFIG REQUIRED)
 find_package(bsoncxx CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
+if(NOT TARGET nlohmann_json::nlohmann_json)
+    find_package(nlohmann_json CONFIG REQUIRED)
+endif()
 find_package(DuckDB CONFIG QUIET)
 
 # vendored drivers: freetds_sybdb (or system libsybdb on linux), odpi, cassandra_static
@@ -84,6 +87,7 @@ include(cmake/CassandraDriver.cmake)
 add_library(libdearsql STATIC
     src/types.cpp
     src/completion.cpp
+    src/explain.cpp
     src/database.cpp
     src/connection_info.cpp
     src/sql_builder.cpp
@@ -128,6 +132,7 @@ target_link_libraries(libdearsql
         OpenSSL::Crypto
     PRIVATE
         httplib::httplib
+        nlohmann_json::nlohmann_json
 )
 
 if(DuckDB_FOUND)

@@ -118,6 +118,21 @@ if (auto id = dearsql::resolveIdentifierAt(sql, 7, catalog, dearsql::DatabaseTyp
 
 The catalog is a plain value: build it once from whatever the host has loaded (tables and views with columns, sequences, routines) and rebuild when that changes. `complete()` filters by the text typed so far (exact-case prefix, prefix, word boundary, substring, then subsequence for catalog names), drops an item equal to the typed word, dedupes and sorts. `insertText` is quoted for the dialect when a name needs it and qualified with its schema when that is not `defaultSchema`. Tests: `tests/completion_tests.cpp` (no database needed).
 
+## Query plans
+
+```cpp
+#include <dearsql/explain.hpp>
+
+auto sql = dearsql::explainSql(type, "SELECT ...", /*analyze*/ false); // nullopt: no parsed plans
+auto result = db->execute(*sql);
+if (auto plan = dearsql::parsePlan(type, result.statements.front(), false)) {
+    // plan->root: PlanNode tree (operation, detail, estimatedRows, cost,
+    // actualRows, loops, totalTimeMs, selfTimeMs, properties, children)
+}
+```
+
+Pure, like completion: the host runs the statement. PostgreSQL uses `EXPLAIN (FORMAT JSON)` (`ANALYZE, BUFFERS` with analyze), MySQL 8.0.16+ `EXPLAIN FORMAT=TREE` / `EXPLAIN ANALYZE` (8.0.18+), SQLite `EXPLAIN QUERY PLAN` (tree only, no numbers). Every other type, CockroachDB, Redshift, MariaDB and TiDB included, gets nullopt. Times are wall time: Postgres per-loop time × loops, except below a Gather where workers run concurrently; `selfTimeMs` is a node's time minus its children's. ANALYZE executes the statement, so deciding when that is safe is the host's job. Tests: `tests/explain_tests.cpp` (fixtures, no database).
+
 ## Layout
 
 ```
@@ -136,6 +151,7 @@ libdearsql/
 │   ├── dearsql.hpp              # umbrella header
 │   ├── types.hpp                # Column, Index, ForeignKey, Routine, Table
 │   ├── completion.hpp           # sql completion + identifier resolution (pure)
+│   ├── explain.hpp              # explain statements + plan parsing (pure)
 │   ├── query_result.hpp         # StatementResult, QueryResult
 │   ├── sql_builder.hpp          # dialect quoting + SQL generation
 │   ├── connection_info.hpp      # DatabaseType, SslMode, ConnectionInfo
@@ -156,6 +172,7 @@ libdearsql/
 ├── src/
 │   ├── types.cpp
 │   ├── completion.cpp
+│   ├── explain.cpp
 │   ├── connection_info.cpp
 │   ├── factory.cpp
 │   ├── database.cpp             # IDatabase builder-based defaults
@@ -164,6 +181,7 @@ libdearsql/
 └── tests/
     ├── common_tests.cpp
     ├── completion_tests.cpp     # pure, no database
+    ├── explain_tests.cpp        # plan parsers on fixtures, no database
     ├── sqlite_tests.cpp
     └── *_tests.cpp              # per backend, skip without DEARSQL_TEST_* env
 ```

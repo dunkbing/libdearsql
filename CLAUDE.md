@@ -44,6 +44,12 @@ the `IDatabase` calls, deciding when to rebuild it, and all rendering. Keep it
 I/O-free and allocation-light (it runs per keystroke); new SQL-language tooling
 (hover, signature help) belongs next to it.
 
+Query plans are the same kind of thing: `include/dearsql/explain.hpp` / `src/explain.cpp`
+build the EXPLAIN statement per dialect (`explainSql`) and parse what the server
+returns into one `PlanNode` tree (`parsePlan`): Postgres JSON, MySQL `FORMAT=TREE`
+text, SQLite `EXPLAIN QUERY PLAN` rows. No I/O; the host runs it and decides when
+ANALYZE (which executes the statement) is safe.
+
 Common types live in `dearsql::` namespace:
 - `Column`, `Index`, `ForeignKey`, `Routine`, `Table` (`include/dearsql/types.hpp`)
 - `StatementResult`, `QueryResult` (`include/dearsql/query_result.hpp`)
@@ -72,6 +78,7 @@ libdearsql/
 │   ├── dearsql.hpp                — umbrella
 │   ├── types.hpp / query_result.hpp / connection_info.hpp / database.hpp / factory.hpp
 │   ├── completion.hpp             — pure sql completion + identifier resolution
+│   ├── explain.hpp                — explain statements + plan parsing (pure)
 │   └── backends/                  — one header per backend
 ├── src/
 │   ├── types.cpp / connection_info.cpp / factory.cpp
@@ -124,6 +131,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | TiDB          | —     | MySQL backend; app runs the MySQL suite on it          |
 | Common        | 7     | type/helper unit tests                                 |
 | Completion    | 17    | pure: contexts, scopes, quoting, dialects, resolve     |
+| Explain       | 6     | pure: postgres json, mysql tree, sqlite plan rows      |
 
 ## Build
 

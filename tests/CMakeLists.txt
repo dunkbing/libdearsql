@@ -3,6 +3,7 @@ find_package(GTest CONFIG REQUIRED)
 add_executable(dearsql_lib_tests
     common_tests.cpp
     completion_tests.cpp
+    explain_tests.cpp
     sqlite_tests.cpp
     postgres_tests.cpp
     mysql_tests.cpp
