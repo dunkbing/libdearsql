@@ -85,6 +85,8 @@ std::string literalList(const std::vector<std::string>& names) {
 }
 
 std::string maintenanceDatabase(DatabaseType type) {
+    if (type == DatabaseType::COCKROACHDB)
+        return "defaultdb";
     return type == DatabaseType::REDSHIFT ? "dev" : "postgres";
 }
 
@@ -460,7 +462,8 @@ std::vector<std::vector<std::string>> PostgresDatabase::rows(const std::string& 
 std::vector<std::string> PostgresDatabase::schemaNames() {
     std::vector<std::string> names;
     for (auto& row : rows("SELECT schema_name FROM information_schema.schemata "
-                          "WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast') "
+                          "WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast', "
+                          "'crdb_internal', 'pg_extension') " // the last two: cockroachdb's
                           "AND schema_name NOT LIKE 'pg\\_temp\\_%' "
                           "AND schema_name NOT LIKE 'pg\\_toast\\_temp\\_%' "
                           "ORDER BY schema_name")) {
@@ -552,7 +555,8 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
     for (const auto& row : rows(std::format(
              "SELECT c.table_name, c.column_name, {}, c.is_nullable, "
              "CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 'true' ELSE 'false' END, "
-             "CASE WHEN c.column_default LIKE 'nextval(%' OR c.is_identity = 'YES' "
+             "CASE WHEN c.column_default LIKE 'nextval(%' OR c.column_default = 'unique_rowid()' "
+             "OR c.is_identity = 'YES' "
              "  THEN 'true' ELSE 'false' END, "
              "COALESCE(c.column_default, '') "
              "FROM information_schema.columns c "
@@ -798,7 +802,8 @@ Table PostgresDatabase::describeIn(const std::string& schema, const std::string&
 
     for (const auto& row : rows(std::format(
              "SELECT c.column_name, {}, c.is_nullable, COALESCE(c.column_default, ''), "
-             "CASE WHEN c.column_default LIKE 'nextval(%' OR c.is_identity = 'YES' "
+             "CASE WHEN c.column_default LIKE 'nextval(%' OR c.column_default = 'unique_rowid()' "
+             "OR c.is_identity = 'YES' "
              "  THEN 'true' ELSE 'false' END "
              "FROM information_schema.columns c "
              "WHERE c.table_schema = {} AND c.table_name = {} ORDER BY c.ordinal_position",
@@ -921,8 +926,10 @@ public:
             throw Error(r.errorMessage());
         if (r.empty())
             return out;
+        // cockroachdb keeps its own metadata in a `system` database
+        const bool crdb = snapshot().type == DatabaseType::COCKROACHDB;
         for (const auto& row : r[0].tableData) {
-            if (!row.empty())
+            if (!row.empty() && !(crdb && row[0] == "system"))
                 out.push_back(database(row[0]));
         }
         return out;
@@ -947,14 +954,16 @@ public:
     Status createDatabase(const CreateDatabaseOptions& opts) {
         if (opts.name.empty())
             return {false, "Database name cannot be empty"};
+        // cockroachdb has no templates or tablespaces
+        const bool crdb = snapshot().type == DatabaseType::COCKROACHDB;
         std::string sql = "CREATE DATABASE " + quoteIdent(opts.name);
         if (!opts.owner.empty())
             sql += " OWNER " + quoteIdent(opts.owner);
-        if (!opts.templateDb.empty())
+        if (!opts.templateDb.empty() && !crdb)
             sql += " TEMPLATE " + quoteIdent(opts.templateDb);
         if (!opts.encoding.empty())
             sql += " ENCODING " + literal(opts.encoding);
-        if (!opts.tablespace.empty())
+        if (!opts.tablespace.empty() && !crdb)
             sql += " TABLESPACE " + quoteIdent(opts.tablespace);
         auto db = defaultDb();
         auto r = db->execute(sql, 0);

@@ -187,7 +187,12 @@ std::string IDatabase::tableDdl(const std::string& tableName) {
         return nonEmpty(joined(rows("SHOW TABLE " + qualified), 0, "\n"));
     case DatabaseType::MYSQL:
     case DatabaseType::MARIADB:
-        return nonEmpty(joined(rows("SHOW CREATE TABLE " + qualified), 1, "")) + ";";
+    case DatabaseType::TIDB:
+    case DatabaseType::COCKROACHDB: {
+        // cockroachdb already ends the statement
+        std::string ddl = nonEmpty(joined(rows("SHOW CREATE TABLE " + qualified), 1, ""));
+        return ddl.ends_with(';') ? ddl : ddl + ";";
+    }
     case DatabaseType::SQLITE:
         // the table first, then its explicit indexes (autoindexes have no sql)
         return nonEmpty(joined(rows(std::format("SELECT sql || ';' FROM sqlite_master "

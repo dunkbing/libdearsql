@@ -102,6 +102,10 @@ std::string databaseTypeToString(DatabaseType type) {
         return "cassandra";
     case DatabaseType::DUCKDB:
         return "duckdb";
+    case DatabaseType::TIDB:
+        return "tidb";
+    case DatabaseType::COCKROACHDB:
+        return "cockroachdb";
     case DatabaseType::S3:
         return "s3";
     }
@@ -131,9 +135,23 @@ DatabaseType stringToDatabaseType(const std::string& s) {
         return DatabaseType::CASSANDRA;
     if (s == "duckdb")
         return DatabaseType::DUCKDB;
+    if (s == "tidb")
+        return DatabaseType::TIDB;
+    if (s == "cockroachdb" || s == "cockroach" || s == "crdb")
+        return DatabaseType::COCKROACHDB;
     if (s == "s3")
         return DatabaseType::S3;
     return DatabaseType::SQLITE;
+}
+
+bool isPostgresFamily(DatabaseType type) {
+    return type == DatabaseType::POSTGRESQL || type == DatabaseType::REDSHIFT ||
+           type == DatabaseType::COCKROACHDB;
+}
+
+bool isMySQLFamily(DatabaseType type) {
+    return type == DatabaseType::MYSQL || type == DatabaseType::MARIADB ||
+           type == DatabaseType::TIDB;
 }
 
 bool isCsvPath(const std::string& path) {
@@ -148,6 +166,7 @@ std::string ConnectionInfo::buildConnectionString(const std::string& dbName) con
     case DatabaseType::DUCKDB:
         return path;
 
+    case DatabaseType::COCKROACHDB:
     case DatabaseType::REDSHIFT:
     case DatabaseType::POSTGRESQL: {
         std::string connStr = "host=" + escapeLibpqValue(host) + " port=" + std::to_string(port);
@@ -159,7 +178,9 @@ std::string ConnectionInfo::buildConnectionString(const std::string& dbName) con
             appendLibpqKeyword(connStr, "dbname", database);
         } else {
             appendLibpqKeyword(connStr, "dbname",
-                               type == DatabaseType::REDSHIFT ? "dev" : "postgres");
+                               type == DatabaseType::REDSHIFT      ? "dev"
+                               : type == DatabaseType::COCKROACHDB ? "defaultdb"
+                                                                   : "postgres");
         }
 
         if (!username.empty())
@@ -176,6 +197,7 @@ std::string ConnectionInfo::buildConnectionString(const std::string& dbName) con
     }
 
     case DatabaseType::MYSQL:
+    case DatabaseType::TIDB:
     case DatabaseType::MARIADB: {
         const std::string targetDb = !dbName.empty() ? dbName : database;
         std::string connStr =

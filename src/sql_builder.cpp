@@ -9,6 +9,7 @@ std::string autoIncrementClause(DatabaseType type) {
     switch (type) {
     case DatabaseType::MYSQL:
     case DatabaseType::MARIADB:
+    case DatabaseType::TIDB:
         return " AUTO_INCREMENT";
     case DatabaseType::SQLITE:
         return " AUTOINCREMENT";
@@ -80,10 +81,12 @@ bool supportsAutoIncrement(DatabaseType dbType, const std::string& columnType) {
 std::unique_ptr<ISQLBuilder> createSQLBuilder(DatabaseType type) {
     switch (type) {
     case DatabaseType::REDSHIFT:
+    case DatabaseType::COCKROACHDB:
     case DatabaseType::POSTGRESQL:
         return std::make_unique<PostgreSQLBuilder>();
     case DatabaseType::MYSQL:
     case DatabaseType::MARIADB:
+    case DatabaseType::TIDB:
         return std::make_unique<MySQLBuilder>();
     case DatabaseType::MSSQL:
         return std::make_unique<MSSQLBuilder>();
@@ -121,7 +124,7 @@ std::string ISQLBuilder::createTable(const Table& table, const std::string& sche
         qualifiedName = quoteIdentifier(table.name);
 
     const auto dbType = databaseType();
-    const bool isMySQL = (dbType == DatabaseType::MYSQL || dbType == DatabaseType::MARIADB);
+    const bool isMySQL = isMySQLFamily(dbType);
 
     std::string sql = std::format("CREATE TABLE {} (", qualifiedName);
 
@@ -217,8 +220,7 @@ std::string ISQLBuilder::tableDdl(const Table& table, const std::string& schemaP
         const bool sequenceDefault = col.defaultValue.starts_with("nextval(");
         if (!col.defaultValue.empty() && !sequenceDefault)
             line += " DEFAULT " + col.defaultValue;
-        if (col.isAutoIncrement && dbType != DatabaseType::POSTGRESQL &&
-            dbType != DatabaseType::REDSHIFT)
+        if (col.isAutoIncrement && !isPostgresFamily(dbType))
             line += autoIncrementClause(dbType);
         if (col.isNotNull && !col.isPrimaryKey && dbType != DatabaseType::CASSANDRA)
             line += " NOT NULL";

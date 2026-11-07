@@ -6,7 +6,7 @@
 ## Project Overview
 
 `libdearsql` is a C++20 static library that exposes a uniform synchronous API
-over SQLite, DuckDB (and CSV), PostgreSQL/Redshift, MySQL/MariaDB, MongoDB, Redis,
+over SQLite, DuckDB (and CSV), PostgreSQL/Redshift/CockroachDB, MySQL/MariaDB/TiDB, MongoDB, Redis,
 MSSQL, Oracle, and Cassandra. Every SQL string and driver call of the DearSQL
 app lives here; the app (and its terminal client / MCP server) is the host and
 adds only tunnels, threads, pools and UI state. New database behaviour is
@@ -120,6 +120,8 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | Redis         | 8     | + key types, TTL, SCAN, SELECT db                      |
 | Cassandra     | 8     | + keyspace as database, CQL                            |
 | Redshift      | 3     | reuses Postgres backend                                |
+| CockroachDB   | —     | Postgres backend; app runs the Postgres suite on it    |
+| TiDB          | —     | MySQL backend; app runs the MySQL suite on it          |
 | Common        | 7     | type/helper unit tests                                 |
 | Completion    | 17    | pure: contexts, scopes, quoting, dialects, resolve     |
 

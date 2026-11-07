@@ -117,6 +117,7 @@ Dialect dialectFor(DatabaseType type) {
     switch (type) {
     case DatabaseType::MYSQL:
     case DatabaseType::MARIADB:
+    case DatabaseType::TIDB:
         d.backtickIdent = true;
         d.doubleQuoteIdent = false;
         d.hashComment = true;
@@ -132,6 +133,7 @@ Dialect dialectFor(DatabaseType type) {
         break;
     case DatabaseType::POSTGRESQL:
     case DatabaseType::REDSHIFT:
+    case DatabaseType::COCKROACHDB:
     case DatabaseType::DUCKDB:
     case DatabaseType::CASSANDRA:
         d.dollarQuote = true;
@@ -320,7 +322,7 @@ StatementSpan statementAt(const std::vector<Token>& all, size_t offset, size_t l
 
 // ---------- keyword and function tables ----------
 
-constexpr size_t kTypeCount = static_cast<size_t>(DatabaseType::DUCKDB) + 1;
+constexpr size_t kTypeCount = static_cast<size_t>(DatabaseType::COCKROACHDB) + 1; // s3 has no sql
 
 // builders are stateless; one per dialect, shared
 const ISQLBuilder& builderFor(DatabaseType type) {
@@ -389,6 +391,7 @@ std::vector<std::string> buildKeywords(DatabaseType type) {
     switch (type) {
     case DatabaseType::POSTGRESQL:
     case DatabaseType::REDSHIFT:
+    case DatabaseType::COCKROACHDB:
         append(kw, {"LIMIT",       "OFFSET",       "RETURNING",    "ILIKE",    "SIMILAR",
                     "LATERAL",     "MATERIALIZED", "CONCURRENTLY", "VACUUM",   "ANALYZE",
                     "COPY",        "ONLY",         "SCHEMA",       "DATABASE", "SEQUENCE",
@@ -406,6 +409,7 @@ std::vector<std::string> buildKeywords(DatabaseType type) {
         break;
     case DatabaseType::MYSQL:
     case DatabaseType::MARIADB:
+    case DatabaseType::TIDB:
         append(kw,
                {"LIMIT",    "OFFSET",    "AUTO_INCREMENT", "ENGINE",    "CHARSET",     "COLLATE",
                 "SHOW",     "DESCRIBE",  "DATABASES",      "TABLES",    "COLUMNS",     "USE",
@@ -559,6 +563,7 @@ std::vector<std::string> buildFunctions(DatabaseType type) {
     switch (type) {
     case DatabaseType::POSTGRESQL:
     case DatabaseType::REDSHIFT:
+    case DatabaseType::COCKROACHDB:
         append(fn, {"STRING_AGG",
                     "ARRAY_AGG",
                     "BOOL_AND",
@@ -644,6 +649,7 @@ std::vector<std::string> buildFunctions(DatabaseType type) {
         break;
     case DatabaseType::MYSQL:
     case DatabaseType::MARIADB:
+    case DatabaseType::TIDB:
         append(fn, {"GROUP_CONCAT",
                     "JSON_ARRAYAGG",
                     "JSON_OBJECTAGG",
@@ -1981,8 +1987,7 @@ bool identifierNeedsQuoting(std::string_view name, DatabaseType type) {
         return true;
     if (!isIdentStartByte(static_cast<unsigned char>(name[0])))
         return true;
-    const bool foldsLower = type == DatabaseType::POSTGRESQL || type == DatabaseType::REDSHIFT ||
-                            type == DatabaseType::CASSANDRA;
+    const bool foldsLower = isPostgresFamily(type) || type == DatabaseType::CASSANDRA;
     const bool foldsUpper = type == DatabaseType::ORACLE;
     for (const char ch : name) {
         const auto c = static_cast<unsigned char>(ch);

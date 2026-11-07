@@ -1,6 +1,8 @@
 #include "dearsql/backends/mysql_connection.hpp"
 #include "dearsql/ddl_utils.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <format>
 #include <map>
@@ -818,11 +820,13 @@ public:
         for (const auto& row : r[0].tableData) {
             if (row.empty())
                 continue;
-            const std::string& n = row[0];
+            // tidb names its system schemas in upper case and adds metrics_schema
+            std::string n = row[0];
+            std::ranges::transform(n, n.begin(), [](unsigned char c) { return std::tolower(c); });
             if (n == "information_schema" || n == "performance_schema" || n == "mysql" ||
-                n == "sys")
+                n == "sys" || n == "metrics_schema")
                 continue;
-            out.push_back(database(n));
+            out.push_back(database(row[0]));
         }
         return out;
     }

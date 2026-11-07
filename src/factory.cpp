@@ -20,9 +20,11 @@ ConnectionPtr makeConnection(const ConnectionInfo& info) {
         return std::make_shared<SQLiteConnection>(info);
     case DatabaseType::POSTGRESQL:
     case DatabaseType::REDSHIFT:
+    case DatabaseType::COCKROACHDB:
         return std::make_shared<PostgresConnection>(info);
     case DatabaseType::MYSQL:
     case DatabaseType::MARIADB:
+    case DatabaseType::TIDB:
         return std::make_shared<MySQLConnection>(info);
     case DatabaseType::MONGODB:
         return std::make_shared<MongoDBConnection>(info);
