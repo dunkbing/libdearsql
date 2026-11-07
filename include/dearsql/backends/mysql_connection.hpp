@@ -48,6 +48,7 @@ public:
 
     // phaseTimings: network latency, execution, data download, data parse
     QueryResult execute(const std::string& sql, int rowLimit) override;
+    std::optional<SyntaxError> checkSyntax(const std::string& sql) override;
 
     std::vector<std::vector<std::string>>
     getTableData(const Table& table, int limit, int offset, const std::string& whereClause,

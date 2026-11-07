@@ -77,3 +77,21 @@ TEST(Syntax, CockroachShowSyntaxResult) {
     ok.tableData = {{"sql", "SELECT 1"}, {"sql", "SELECT * FROM t"}};
     EXPECT_FALSE(dearsql::cockroachSyntaxError(sql, ok));
 }
+
+// 1064 messages as mysql 8 and tidb word them, read back to an offset in the statement
+TEST(Syntax, MysqlParseErrorOffset) {
+    const std::string stmt = "select *\nfrom t\nwhere x = = 1";
+    const auto at = stmt.find("= 1");
+    EXPECT_EQ(dearsql::mysqlParseErrorOffset(
+                  stmt, "You have an error in your SQL syntax; check the manual that corresponds "
+                        "to your MySQL server version for the right syntax to use near '= 1' at "
+                        "line 3"),
+              at);
+    EXPECT_EQ(dearsql::mysqlParseErrorOffset(
+                  stmt, "You have an error in your SQL syntax; check the manual that corresponds "
+                        "to your TiDB version for the right syntax to use line 3 column 12 near "
+                        "\"= 1\" "),
+              at);
+    EXPECT_EQ(dearsql::mysqlParseErrorOffset("select 1 from", "... to use near '' at line 1"), 13u);
+    EXPECT_FALSE(dearsql::mysqlParseErrorOffset(stmt, "Table 't' doesn't exist"));
+}

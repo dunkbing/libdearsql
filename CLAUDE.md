@@ -48,7 +48,9 @@ Syntax checks too: `include/dearsql/syntax.hpp` / `src/syntax.cpp` run the engin
 parser (libpg_query for Postgres, sqlite3 prepare on an empty `:memory:` db, DuckDB's
 parser) and never guess for engines without one. CockroachDB (`SHOW SYNTAX`) and SQL
 Server (`SET PARSEONLY`, its own batch each side; the session is dropped if `OFF` fails)
-check on the server through `IDatabase::checkSyntax`, whose default is the offline check. libpg_query is vendored and built by
+check on the server through `IDatabase::checkSyntax`, as do MySQL, MariaDB and TiDB
+(`mysql_stmt_prepare` per statement, only error 1064 counts; stops at a routine definition);
+the default is the offline check. libpg_query is vendored and built by
 `cmake/PgQuery.cmake` with every non-api symbol renamed (`cmake/pg_query_prefix.h`,
 generated) so it links next to libpq and libmariadb.
 

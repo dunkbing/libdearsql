@@ -1,7 +1,9 @@
 #include "dearsql/backends/mysql_connection.hpp"
+#include "dearsql/completion.hpp"
 #include "dearsql/ddl_utils.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <format>
@@ -772,6 +774,38 @@ Status MySQLDatabase::dropColumn(const std::string& tableName, const std::string
 Status MySQLDatabase::dropView(const std::string& viewName, bool /*isMaterialized*/) {
     auto r = execute("DROP VIEW " + quoteIdent(viewName), 0);
     return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
+}
+
+// prepare parses, then looks tables up, and never runs anything: only a parse error
+// (1064) is about the text. one statement per prepare
+std::optional<SyntaxError> MySQLDatabase::checkSyntax(const std::string& sql) {
+    try {
+        ensureConn();
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+    std::lock_guard lock(mu_);
+    for (const auto& [begin, end] : statementRanges(sql, info_.type)) {
+        const std::string_view stmt = std::string_view(sql).substr(begin, end - begin);
+        // ponytail: a routine body holds ';' the splitter cuts at, and its end is unknown
+        // without the grammar: stop at the first one (statements before it are checked)
+        std::string head(stmt.substr(0, 200));
+        std::ranges::transform(head, head.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (head.starts_with("create") &&
+            std::ranges::any_of(std::array{" procedure ", " function ", " trigger ", " event "},
+                                [&](const char* w) { return head.find(w) != std::string::npos; }))
+            break;
+        MYSQL_STMT* prepared = mysql_stmt_init(conn_);
+        if (!prepared)
+            return std::nullopt;
+        const bool failed = mysql_stmt_prepare(prepared, stmt.data(), stmt.size()) != 0;
+        const unsigned code = mysql_stmt_errno(prepared);
+        const std::string message = failed ? mysql_stmt_error(prepared) : "";
+        mysql_stmt_close(prepared);
+        if (failed && code == 1064) // ER_PARSE_ERROR
+            return SyntaxError{message, begin + mysqlParseErrorOffset(stmt, message).value_or(0)};
+    }
+    return std::nullopt;
 }
 
 namespace {

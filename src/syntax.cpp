@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <memory>
 #include <pg_query.h>
+#include <regex>
 #include <sqlite3.h>
 
 #ifdef DEARSQL_HAS_DUCKDB
@@ -112,7 +113,41 @@ namespace dearsql {
     }
 
     bool hasServerSyntaxCheck(DatabaseType type) {
-        return type == DatabaseType::COCKROACHDB || type == DatabaseType::MSSQL;
+        return type == DatabaseType::COCKROACHDB || type == DatabaseType::MSSQL ||
+               type == DatabaseType::MYSQL || type == DatabaseType::MARIADB ||
+               type == DatabaseType::TIDB;
+    }
+
+    std::optional<size_t> mysqlParseErrorOffset(std::string_view stmt, const std::string& message) {
+        // mysql, mariadb: ... near '<rest>' at line N; tidb: ... line N column C near "<rest>"
+        static const std::regex mysqlRe(R"(near '([\s\S]*)' at line (\d+)\s*$)");
+        static const std::regex tidbRe(R"re(line (\d+) column \d+ near "([\s\S]*)"\s*$)re");
+        std::smatch m;
+        std::string near;
+        int line = 0;
+        if (std::regex_search(message, m, mysqlRe)) {
+            near = m[1].str();
+            line = std::stoi(m[2].str());
+        } else if (std::regex_search(message, m, tidbRe)) {
+            line = std::stoi(m[1].str());
+            near = m[2].str();
+        } else {
+            return std::nullopt;
+        }
+        size_t lineStart = 0;
+        for (int l = 1; l < line; ++l) {
+            const auto nl = stmt.find('\n', lineStart);
+            if (nl == std::string_view::npos) {
+                break;
+            }
+            lineStart = nl + 1;
+        }
+        if (near.empty()) {
+            return stmt.size(); // ran out of text: the error is at the end
+        }
+        // the quoted rest is cut at 80 characters; its start is enough to find it
+        const auto at = stmt.find(std::string_view(near).substr(0, 20), lineStart);
+        return at == std::string_view::npos ? lineStart : at;
     }
 
     std::string cockroachSyntaxSql(std::string_view sql) {
@@ -151,9 +186,11 @@ namespace dearsql {
             const auto lastLine = source.rfind('\n');
             // ponytail: first match of the echoed statement; a script repeating it verbatim
             // points at the first copy
-            if (const auto at = sql.find(source); at != std::string_view::npos && caret != std::string::npos) {
-                error.offset = std::min(sql.size(), at + (lastLine == std::string::npos ? 0 : lastLine + 1) +
-                                                        (caret - caretLine - 1));
+            if (const auto at = sql.find(source);
+                at != std::string_view::npos && caret != std::string::npos) {
+                error.offset =
+                    std::min(sql.size(), at + (lastLine == std::string::npos ? 0 : lastLine + 1) +
+                                             (caret - caretLine - 1));
             }
         }
         return error;

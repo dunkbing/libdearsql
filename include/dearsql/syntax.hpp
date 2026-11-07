@@ -28,6 +28,10 @@ namespace dearsql {
     // engines whose check needs a connection: run IDatabase::checkSyntax off the UI thread
     [[nodiscard]] bool hasServerSyntaxCheck(DatabaseType type);
 
+    // where a mysql/mariadb/tidb parse error (1064) points in the statement, from its message
+    [[nodiscard]] std::optional<size_t> mysqlParseErrorOffset(std::string_view stmt,
+                                                              const std::string& message);
+
     // CockroachDB's SHOW SYNTAX for the text, and its result read back (pure, for tests)
     [[nodiscard]] std::string cockroachSyntaxSql(std::string_view sql);
     [[nodiscard]] std::optional<SyntaxError> cockroachSyntaxError(std::string_view sql,
