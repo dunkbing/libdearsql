@@ -3,6 +3,7 @@
 #include "connection_info.hpp"
 #include "query_result.hpp"
 #include "sql_builder.hpp"
+#include "syntax.hpp"
 #include "types.hpp"
 #include <memory>
 #include <stdexcept>
@@ -136,6 +137,10 @@ public:
     virtual std::string tableDdl(const std::string& tableName);
 
     virtual QueryResult execute(const std::string& sql, int rowLimit = 1000) = 0;
+
+    // syntax errors only, never missing tables: the offline parser (syntax.hpp), or the
+    // server's parse-only mode where hasServerSyntaxCheck (a round trip; nothing runs)
+    virtual std::optional<SyntaxError> checkSyntax(const std::string& sql);
 
     // false when the session behind this handle is gone; pools reopen it
     virtual bool alive() {

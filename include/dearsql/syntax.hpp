@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dearsql/connection_info.hpp"
+#include "dearsql/query_result.hpp"
 
 #include <optional>
 #include <string>
@@ -9,7 +10,9 @@
 // Syntax checking with each engine's own parser, so a valid statement is never
 // flagged: PostgreSQL (libpg_query, the server's grammar), SQLite (sqlite3 prepare
 // against an empty in-memory database, syntax errors only) and DuckDB (its parser).
-// Every other engine has no embeddable parser and is never checked. No I/O.
+// Two engines check on the server, through IDatabase::checkSyntax: CockroachDB
+// (SHOW SYNTAX) and SQL Server (SET PARSEONLY). Every other engine has no
+// syntax-only check and is never checked. The functions here do no I/O.
 namespace dearsql {
 
     struct SyntaxError {
@@ -21,5 +24,13 @@ namespace dearsql {
 
     // nullopt when the text parses, or when the engine has no checker
     [[nodiscard]] std::optional<SyntaxError> checkSyntax(std::string_view sql, DatabaseType type);
+
+    // engines whose check needs a connection: run IDatabase::checkSyntax off the UI thread
+    [[nodiscard]] bool hasServerSyntaxCheck(DatabaseType type);
+
+    // CockroachDB's SHOW SYNTAX for the text, and its result read back (pure, for tests)
+    [[nodiscard]] std::string cockroachSyntaxSql(std::string_view sql);
+    [[nodiscard]] std::optional<SyntaxError> cockroachSyntaxError(std::string_view sql,
+                                                                  const StatementResult& result);
 
 } // namespace dearsql

@@ -2,6 +2,7 @@
 
 #include "dearsql/completion.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <pg_query.h>
 #include <sqlite3.h>
@@ -108,6 +109,54 @@ namespace dearsql {
         default:
             return false;
         }
+    }
+
+    bool hasServerSyntaxCheck(DatabaseType type) {
+        return type == DatabaseType::COCKROACHDB || type == DatabaseType::MSSQL;
+    }
+
+    std::string cockroachSyntaxSql(std::string_view sql) {
+        std::string out = "SHOW SYNTAX '";
+        for (const char c : sql) {
+            out += c == '\'' ? "''" : std::string(1, c);
+        }
+        return out + "'";
+    }
+
+    // rows of (field, message); an error carries "detail": source SQL:\n<statement up to
+    // the error line>\n<spaces>^
+    std::optional<SyntaxError> cockroachSyntaxError(std::string_view sql,
+                                                    const StatementResult& result) {
+        std::string message;
+        std::string detail;
+        for (const auto& row : result.tableData) {
+            if (row.size() < 2) {
+                continue;
+            }
+            if (row[0] == "error") {
+                message = row[1];
+            } else if (row[0] == "detail") {
+                detail = row[1];
+            }
+        }
+        if (message.empty()) {
+            return std::nullopt;
+        }
+        SyntaxError error{message, 0};
+        constexpr std::string_view head = "source SQL:\n";
+        const auto caretLine = detail.rfind('\n');
+        if (detail.starts_with(head) && caretLine != std::string::npos && caretLine > head.size()) {
+            const std::string source = detail.substr(head.size(), caretLine - head.size());
+            const auto caret = detail.find('^', caretLine);
+            const auto lastLine = source.rfind('\n');
+            // ponytail: first match of the echoed statement; a script repeating it verbatim
+            // points at the first copy
+            if (const auto at = sql.find(source); at != std::string_view::npos && caret != std::string::npos) {
+                error.offset = std::min(sql.size(), at + (lastLine == std::string::npos ? 0 : lastLine + 1) +
+                                                        (caret - caretLine - 1));
+            }
+        }
+        return error;
     }
 
     std::optional<SyntaxError> checkSyntax(std::string_view sql, DatabaseType type) {

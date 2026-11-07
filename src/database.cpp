@@ -165,6 +165,17 @@ std::string postgresTableDdl(
 
 } // namespace
 
+std::optional<SyntaxError> IDatabase::checkSyntax(const std::string& sql) {
+    if (type() == DatabaseType::COCKROACHDB) {
+        const auto result = execute(cockroachSyntaxSql(sql), 100);
+        if (result.statements.empty() || !result.statements.front().success) {
+            return std::nullopt; // the check itself failed: say nothing
+        }
+        return cockroachSyntaxError(sql, result.statements.front());
+    }
+    return dearsql::checkSyntax(sql, type());
+}
+
 std::string IDatabase::tableDdl(const std::string& tableName) {
     auto builder = createSQLBuilder(type());
     const std::string schema = schemaName();

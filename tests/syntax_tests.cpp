@@ -59,3 +59,21 @@ TEST(Syntax, NoGuessingForOtherEngines) {
     EXPECT_FALSE(checkSyntax("select * frm t", DatabaseType::MYSQL));
     EXPECT_FALSE(checkSyntax("select top 10 * from [t]", DatabaseType::MSSQL));
 }
+
+// SHOW SYNTAX output as cockroach 25 returns it: the caret points into the second statement
+TEST(Syntax, CockroachShowSyntaxResult) {
+    const std::string sql = "select 1;\nselect *\n  frm t";
+    EXPECT_EQ(dearsql::cockroachSyntaxSql("select 'a'"), "SHOW SYNTAX 'select ''a'''");
+    dearsql::StatementResult r;
+    r.tableData = {{"error", "at or near \"frm\": syntax error"},
+                   {"code", "42601"},
+                   {"detail", "source SQL:\nselect *\n  frm t\n  ^"}};
+    const auto error = dearsql::cockroachSyntaxError(sql, r);
+    ASSERT_TRUE(error);
+    EXPECT_EQ(error->message, "at or near \"frm\": syntax error");
+    EXPECT_EQ(sql.substr(error->offset, 3), "frm");
+
+    dearsql::StatementResult ok;
+    ok.tableData = {{"sql", "SELECT 1"}, {"sql", "SELECT * FROM t"}};
+    EXPECT_FALSE(dearsql::cockroachSyntaxError(sql, ok));
+}
