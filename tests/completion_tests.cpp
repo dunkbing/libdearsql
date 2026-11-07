@@ -9,84 +9,85 @@ using namespace dearsql;
 
 namespace {
 
-Table makeTable(std::string schema, std::string name,
-                std::vector<std::pair<std::string, std::string>> cols) {
-    Table t;
-    t.schema = std::move(schema);
-    t.name = std::move(name);
-    for (auto& [n, type] : cols) {
-        Column c;
-        c.name = n;
-        c.type = type;
-        t.columns.push_back(std::move(c));
+    Table makeTable(std::string schema, std::string name,
+                    std::vector<std::pair<std::string, std::string>> cols) {
+        Table t;
+        t.schema = std::move(schema);
+        t.name = std::move(name);
+        for (auto& [n, type] : cols) {
+            Column c;
+            c.name = n;
+            c.type = type;
+            t.columns.push_back(std::move(c));
+        }
+        return t;
     }
-    return t;
-}
 
-CompletionCatalog pgCatalog() {
-    CompletionCatalog cat;
-    cat.defaultSchema = "public";
-    cat.tables.push_back(
-        makeTable("public", "users", {{"id", "integer"}, {"name", "text"}, {"email", "text"}}));
-    cat.tables.push_back(makeTable("public", "orders",
-                                   {{"id", "integer"},
-                                    {"user_id", "integer"},
-                                    {"total", "numeric"},
-                                    {"created_at", "timestamp"},
-                                    {"order", "text"}}));
-    cat.tables.push_back(makeTable("public", "Order Items", {{"qty", "integer"}}));
-    cat.tables.push_back(makeTable("sales", "invoices", {{"amount", "numeric"}}));
-    cat.views.push_back(makeTable("public", "active_users", {{"id", "integer"}}));
-    cat.sequences.push_back({"public", "orders_id_seq"});
-    return cat;
-}
-
-struct Run {
-    CompletionResult result;
-    std::string sql;
-    size_t cursor = 0;
-};
-
-// '|' marks the cursor
-Run run(std::string text, const CompletionCatalog& cat,
-        DatabaseType type = DatabaseType::POSTGRESQL) {
-    const size_t pos = text.find('|');
-    text.erase(pos, 1);
-    Run r;
-    r.result = complete(text, pos, cat, type);
-    r.sql = std::move(text);
-    r.cursor = pos;
-    return r;
-}
-
-const CompletionItem* find(const CompletionResult& r, std::string_view label, CompletionKind kind) {
-    for (const auto& it : r.items) {
-        if (it.label == label && it.kind == kind)
-            return &it;
+    CompletionCatalog pgCatalog() {
+        CompletionCatalog cat;
+        cat.defaultSchema = "public";
+        cat.tables.push_back(
+            makeTable("public", "users", {{"id", "integer"}, {"name", "text"}, {"email", "text"}}));
+        cat.tables.push_back(makeTable("public", "orders",
+                                       {{"id", "integer"},
+                                        {"user_id", "integer"},
+                                        {"total", "numeric"},
+                                        {"created_at", "timestamp"},
+                                        {"order", "text"}}));
+        cat.tables.push_back(makeTable("public", "Order Items", {{"qty", "integer"}}));
+        cat.tables.push_back(makeTable("sales", "invoices", {{"amount", "numeric"}}));
+        cat.views.push_back(makeTable("public", "active_users", {{"id", "integer"}}));
+        cat.sequences.push_back({"public", "orders_id_seq"});
+        return cat;
     }
-    return nullptr;
-}
 
-int rankOf(const CompletionResult& r, std::string_view label) {
-    for (size_t i = 0; i < r.items.size(); ++i) {
-        if (r.items[i].label == label)
-            return static_cast<int>(i);
+    struct Run {
+        CompletionResult result;
+        std::string sql;
+        size_t cursor = 0;
+    };
+
+    // '|' marks the cursor
+    Run run(std::string text, const CompletionCatalog& cat,
+            DatabaseType type = DatabaseType::POSTGRESQL) {
+        const size_t pos = text.find('|');
+        text.erase(pos, 1);
+        Run r;
+        r.result = complete(text, pos, cat, type);
+        r.sql = std::move(text);
+        r.cursor = pos;
+        return r;
     }
-    return -1;
-}
 
-bool hasKind(const CompletionResult& r, CompletionKind kind) {
-    for (const auto& it : r.items) {
-        if (it.kind == kind)
-            return true;
+    const CompletionItem* find(const CompletionResult& r, std::string_view label,
+                               CompletionKind kind) {
+        for (const auto& it : r.items) {
+            if (it.label == label && it.kind == kind)
+                return &it;
+        }
+        return nullptr;
     }
-    return false;
-}
 
-std::pair<size_t, size_t> at(const std::string& sql, std::string_view needle) {
-    const size_t p = sql.find(needle);
-    return {p, p + needle.size()};
-}
+    int rankOf(const CompletionResult& r, std::string_view label) {
+        for (size_t i = 0; i < r.items.size(); ++i) {
+            if (r.items[i].label == label)
+                return static_cast<int>(i);
+        }
+        return -1;
+    }
+
+    bool hasKind(const CompletionResult& r, CompletionKind kind) {
+        for (const auto& it : r.items) {
+            if (it.kind == kind)
+                return true;
+        }
+        return false;
+    }
+
+    std::pair<size_t, size_t> at(const std::string& sql, std::string_view needle) {
+        const size_t p = sql.find(needle);
+        return {p, p + needle.size()};
+    }
 
 } // namespace
 
@@ -486,4 +487,18 @@ TEST(Completion, FromPrefixSkipsUnrelatedKeywords) {
     EXPECT_EQ(find(run("select fals|", cat, DatabaseType::SQLITE).result, "FALSE",
                    CompletionKind::Keyword) != nullptr,
               true);
+}
+
+TEST(Completion, StatementRangesSkipCommentsAndQuotedSemicolons) {
+    const std::string sql =
+        "-- first\nSELECT 'a;b' FROM t;\n\n/* only a comment */;\nUPDATE t SET a = 1 "
+        "-- trailing\n;DO $$ BEGIN PERFORM 1; END $$";
+    const auto ranges = statementRanges(sql, DatabaseType::POSTGRESQL);
+    ASSERT_EQ(ranges.size(), 3u);
+    auto text = [&](size_t i) {
+        return sql.substr(ranges[i].first, ranges[i].second - ranges[i].first);
+    };
+    EXPECT_EQ(text(0), "SELECT 'a;b' FROM t");
+    EXPECT_EQ(text(1), "UPDATE t SET a = 1");
+    EXPECT_EQ(text(2), "DO $$ BEGIN PERFORM 1; END $$");
 }

@@ -60,29 +60,19 @@ namespace dearsql {
                 return std::nullopt;
             }
             // statement by statement: a semantic error stops sqlite's parser mid-statement
-            size_t pos = 0;
-            while (pos < sql.size()) {
-                const auto [begin, end] = statementRangeAt(sql, pos, DatabaseType::SQLITE);
-                if (end > begin) {
-                    const std::string stmt(sql.substr(begin, end - begin));
-                    sqlite3_stmt* prepared = nullptr;
-                    const int rc = sqlite3_prepare_v2(
-                        db.get(), stmt.c_str(), static_cast<int>(stmt.size()), &prepared, nullptr);
-                    sqlite3_finalize(prepared);
-                    if (rc != SQLITE_OK) {
-                        const std::string msg = sqlite3_errmsg(db.get());
-                        if (isSqliteSyntaxError(msg)) {
-                            const int at = sqlite3_error_offset(db.get());
-                            return SyntaxError{msg,
-                                               begin + (at >= 0 ? static_cast<size_t>(at) : 0)};
-                        }
+            for (const auto& [begin, end] : statementRanges(sql, DatabaseType::SQLITE)) {
+                const std::string stmt(sql.substr(begin, end - begin));
+                sqlite3_stmt* prepared = nullptr;
+                const int rc = sqlite3_prepare_v2(
+                    db.get(), stmt.c_str(), static_cast<int>(stmt.size()), &prepared, nullptr);
+                sqlite3_finalize(prepared);
+                if (rc != SQLITE_OK) {
+                    const std::string msg = sqlite3_errmsg(db.get());
+                    if (isSqliteSyntaxError(msg)) {
+                        const int at = sqlite3_error_offset(db.get());
+                        return SyntaxError{msg, begin + (at >= 0 ? static_cast<size_t>(at) : 0)};
                     }
                 }
-                const size_t semi = sql.find(';', std::max(end, pos));
-                if (semi == std::string_view::npos) {
-                    break;
-                }
-                pos = semi + 1;
             }
             return std::nullopt;
         }
