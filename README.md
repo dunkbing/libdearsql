@@ -6,7 +6,7 @@ The library exposes a small abstraction (`IConnection` → `IDatabase`) that map
 
 ## Status
 
-Every backend is implemented and covered by the integration suite: SQLite, DuckDB (and CSV files, opened as an in-memory DuckDB table), PostgreSQL (and Redshift), MySQL (and MariaDB), MongoDB, Redis, MSSQL, Oracle, Cassandra. DuckDB is built when CMake finds the `DuckDB` package (`DEARSQL_HAS_DUCKDB`).
+Every backend is implemented and covered by the integration suite: SQLite, DuckDB (and CSV files, opened as a read-only DuckDB view over the file, so queries always see it as saved), PostgreSQL (and Redshift), MySQL (and MariaDB), MongoDB, Redis, MSSQL, Oracle, Cassandra. DuckDB is built when CMake finds the `DuckDB` package (`DEARSQL_HAS_DUCKDB`).
 
 The shared API covers connection lifecycle, database/schema discovery, catalog loading (tables with columns, indexes, foreign keys in and out, sizes; views and materialized views with columns and definitions; sequences; routines), query execution (multi-statement, row limits, informational messages, client-side phase timings), table data paging, table/database DDL, row and column mutation, and dialect SQL via `createSQLBuilder(DatabaseType)`.
 
@@ -39,6 +39,7 @@ Backend extras, on the concrete classes:
 |---|---|
 | PostgreSQL | `PostgresDatabase::handle()` (`PGconn*`), schema handles switch `search_path` only when needed and database-level queries reset it |
 | MySQL | `MySQLDatabase::handle()` (`MYSQL*`) for session-scoped work such as dump import/export, `ping()` |
+| DuckDB | `csvMatchingRows(path, where, CsvFormat)` — the 0-based data rows of a CSV file where a SQL condition holds, read on a throwaway in-memory database in file order (`CsvFormat`: delimiter, quote, header, encoding); throws `Error` on a bad condition. For hosts that edit the file themselves and filter it through DuckDB. Writing CSV files is left to the host. |
 | Redis | `RedisConnection::databaseInfo()` (keys/expires/avg TTL per logical db; db count inferred when `CONFIG GET databases` is refused), `selectedDatabase()`, key helpers |
 | Oracle | each schema handle has its own session with `CURRENT_SCHEMA` set; `dearsql::oracle` installer: `install(onProgress, shouldCancel)`, `setInstallRoot(dir)`, `setClientOptions({autoInstall, reexecForLibraryPath})`, `needsClientInstall()`, `resetContext()` |
 | MSSQL | `PRINT` / `RAISERROR` (severity ≤ 10) in `QueryResult::messages`; system databases hidden; `sslmode` Require encrypts, VerifyCA also checks the certificate and hostname against `sslCACertPath` (or the system store), VerifyFull is TDS 8.0 strict with the same checks |

@@ -93,7 +93,8 @@ libdearsql/
 ## Backend Status
 
 All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built
-when CMake finds DuckDB; `.csv` paths open as an in-memory table). Every server
+when CMake finds DuckDB; `.csv` paths open as a read-only view over the file, and
+`csvMatchingRows()` filters a CSV with a SQL condition for hosts that edit it). Every server
 backend has `openDatabase()`, `cancel()` and `alive()` (cancel is a no-op on MongoDB,
 Redis and Cassandra; README "Status" lists the mechanism per backend — never drive
 the busy handle from the cancelling thread); Postgres/MSSQL have a cheap
@@ -110,7 +111,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | Backend       | Tests | Notes                                                  |
 | ------------- | ----- | ------------------------------------------------------ |
 | SQLite        | 16    | full, + table DDL round trip and builder fallback      |
-| DuckDB        | 5     | + foreign keys, csv files, parallel handles, DDL       |
+| DuckDB        | 6     | + foreign keys, csv view and row filter, parallel handles, DDL |
 | PostgreSQL    | 17    | + schemas, sequences, routines, matviews, catalog DDL  |
 | MySQL         | 14    | + AUTO_INCREMENT detect, routines, SHOW CREATE TABLE   |
 | MSSQL         | 11    | + dbo schema, OFFSET/FETCH paging, builder DDL         |

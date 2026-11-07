@@ -308,7 +308,8 @@ Status DuckDBConnection::open() {
     if (db_)
         return {true, ""};
 
-    // ponytail: csv is a materialized in-memory copy; reopening re-imports the file
+    // csv: an in-memory database with a view over the file, so queries always read
+    // the file as saved and nothing can write to it
     const bool csv = isCsvPath(info_.path);
     auto db = std::make_shared<Db>();
 
@@ -332,13 +333,13 @@ Status DuckDBConnection::open() {
     db_ = db;
 
     if (csv) {
-        auto r = database()->execute(std::format("CREATE TABLE {} AS SELECT * FROM read_csv({})",
+        auto r = database()->execute(std::format("CREATE VIEW {} AS SELECT * FROM read_csv({})",
                                                  quoteIdent(stemOf(info_.path)),
                                                  literal(info_.path)),
                                      0);
         if (!r.success()) {
             close();
-            return {false, "Failed to import CSV: " + r.errorMessage()};
+            return {false, "Failed to read CSV: " + r.errorMessage()};
         }
     }
     return {true, ""};
@@ -373,6 +374,38 @@ DatabasePtr DuckDBConnection::openDatabase(const std::string& /*name*/) {
     if (duckdb_connect(db->db, &con) == DuckDBError)
         return nullptr;
     return std::make_shared<DuckDBDatabaseNode>(db, con, std::filesystem::path(info_.path).filename().string());
+}
+
+std::vector<std::size_t> csvMatchingRows(const std::string& path, const std::string& where,
+                                         const CsvFormat& format) {
+    auto db = std::make_shared<Db>();
+    char* errMsg = nullptr;
+    if (duckdb_open_ext(":memory:", &db->db, nullptr, &errMsg) == DuckDBError) {
+        std::string error = errMsg ? errMsg : "Unable to open DuckDB";
+        duckdb_free(errMsg);
+        db->db = nullptr;
+        throw Error(error);
+    }
+    duckdb_free(errMsg);
+    duckdb_connection con = nullptr;
+    if (duckdb_connect(db->db, &con) == DuckDBError)
+        throw Error("Unable to connect to DuckDB");
+    DuckDBDatabaseNode node(db, con, "");
+
+    // a single-threaded scan keeps file order, so row_number() is the data row
+    const auto source = std::format(
+        "read_csv({}, delim = {}, quote = {}, header = {}, encoding = {}, null_padding = true, "
+        "parallel = false)",
+        literal(path), literal(format.delimiter), literal(std::string(1, format.quote)),
+        format.header ? "true" : "false", literal(format.encoding));
+    const auto sql = std::format("SELECT __dearsql_row FROM (SELECT row_number() OVER () - 1 AS "
+                                 "__dearsql_row, * FROM {}) WHERE ({}) ORDER BY 1",
+                                 source, where.empty() ? "true" : where);
+
+    std::vector<std::size_t> out;
+    for (const auto& row : node.rows(sql))
+        out.push_back(std::stoull(row.at(0)));
+    return out;
 }
 
 } // namespace dearsql

@@ -35,4 +35,18 @@ private:
     DatabasePtr defaultDb_;
 };
 
+// how a csv file is laid out, for reading it with DuckDB
+struct CsvFormat {
+    std::string delimiter = ",";
+    char quote = '"';
+    bool header = true;
+    std::string encoding = "utf-8"; // utf-8, utf-16 or latin-1
+};
+
+// 0-based data rows (header excluded) of a csv file where `where`, a DuckDB SQL
+// condition over the file's columns, holds. reads the file as saved, on its own
+// in-memory database; throws Error on an unreadable file or a bad condition
+std::vector<std::size_t> csvMatchingRows(const std::string& path, const std::string& where,
+                                         const CsvFormat& format = {});
+
 } // namespace dearsql

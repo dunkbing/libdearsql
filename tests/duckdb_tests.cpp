@@ -1,3 +1,4 @@
+#include "dearsql/backends/duckdb_connection.hpp"
 #include "dearsql/dearsql.hpp"
 #include <algorithm>
 #include <filesystem>
@@ -59,10 +60,37 @@ TEST(DuckDB, CsvOpensAsTable) {
     const auto path = std::filesystem::temp_directory_path() / "libdearsql_people.csv";
     std::ofstream(path) << "name,age\nada,36\nlinus,28\n";
     auto db = openDuck(path.string())->database();
-    auto tables = db->tables();
-    ASSERT_EQ(tables.size(), 1u);
-    EXPECT_EQ(tables[0].name, "libdearsql_people");
-    EXPECT_EQ(db->getRowCount(tables[0]), 2);
+    EXPECT_TRUE(db->tables().empty());
+    auto views = db->views();
+    ASSERT_EQ(views.size(), 1u);
+    EXPECT_EQ(views[0].name, "libdearsql_people");
+    EXPECT_EQ(db->getRowCount(views[0]), 2);
+
+    // a view over the file: writes fail, later saves show up
+    EXPECT_FALSE(db->execute("DELETE FROM libdearsql_people", 0).success());
+    std::ofstream(path) << "name,age\nada,36\nlinus,28\ngrace,45\n";
+    EXPECT_EQ(db->getRowCount(views[0]), 3);
+    std::filesystem::remove(path);
+}
+
+TEST(DuckDB, CsvMatchingRowsFollowFileOrder) {
+    const auto path = std::filesystem::temp_directory_path() / "libdearsql_match.csv";
+    {
+        std::ofstream out(path);
+        out << "id;label\n";
+        for (int i = 0; i < 50000; ++i)
+            out << i << ";\"x;" << i % 7 << "\"\n";
+    }
+    CsvFormat format;
+    format.delimiter = ";";
+    const auto rows = csvMatchingRows(path.string(), "id % 1000 = 0 AND label = 'x;3'", format);
+    ASSERT_FALSE(rows.empty());
+    for (std::size_t r : rows) {
+        EXPECT_EQ(r % 1000, 0u);
+        EXPECT_EQ(r % 7, 3u);
+    }
+    EXPECT_EQ(csvMatchingRows(path.string(), "", format).size(), 50000u);
+    EXPECT_THROW(csvMatchingRows(path.string(), "no_such_column = 1", format), Error);
     std::filesystem::remove(path);
 }
 
