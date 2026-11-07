@@ -102,6 +102,8 @@ std::string databaseTypeToString(DatabaseType type) {
         return "cassandra";
     case DatabaseType::DUCKDB:
         return "duckdb";
+    case DatabaseType::S3:
+        return "s3";
     }
     return "unknown";
 }
@@ -129,6 +131,8 @@ DatabaseType stringToDatabaseType(const std::string& s) {
         return DatabaseType::CASSANDRA;
     if (s == "duckdb")
         return DatabaseType::DUCKDB;
+    if (s == "s3")
+        return DatabaseType::S3;
     return DatabaseType::SQLITE;
 }
 
@@ -219,6 +223,9 @@ std::string ConnectionInfo::buildConnectionString(const std::string& dbName) con
         return "//" + host + ":" + std::to_string(port) + "/" + database;
 
     case DatabaseType::CASSANDRA:
+        return host + ":" + std::to_string(port);
+
+    case DatabaseType::S3:
         return host + ":" + std::to_string(port);
     }
     return "";

@@ -15,7 +15,8 @@ enum class DatabaseType {
     ORACLE,
     REDSHIFT,
     CASSANDRA,
-    DUCKDB
+    DUCKDB,
+    S3 // object storage: the host browses it; the library has no backend for it
 };
 
 enum class SslMode { Disable, Allow, Prefer, Require, VerifyCA, VerifyFull, VerifyIdentity };

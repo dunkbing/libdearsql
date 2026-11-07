@@ -6,7 +6,7 @@ The library exposes a small abstraction (`IConnection` → `IDatabase`) that map
 
 ## Status
 
-Every backend is implemented and covered by the integration suite: SQLite, DuckDB (and CSV files, opened as a read-only DuckDB view over the file, so queries always see it as saved), PostgreSQL (and Redshift), MySQL (and MariaDB), MongoDB, Redis, MSSQL, Oracle, Cassandra. DuckDB is built when CMake finds the `DuckDB` package (`DEARSQL_HAS_DUCKDB`).
+Every backend is implemented and covered by the integration suite: SQLite, DuckDB (and CSV files, opened as a read-only DuckDB view over the file, so queries always see it as saved), PostgreSQL (and Redshift), MySQL (and MariaDB), MongoDB, Redis, MSSQL, Oracle, Cassandra. DuckDB is built when CMake finds the `DuckDB` package (`DEARSQL_HAS_DUCKDB`). `DatabaseType::S3` is only a type tag for hosts that browse object storage themselves: it round-trips through the type strings, and `makeConnection` returns null for it.
 
 The shared API covers connection lifecycle, database/schema discovery, catalog loading (tables with columns, indexes, foreign keys in and out, sizes; views and materialized views with columns and definitions; sequences; routines), query execution (multi-statement, row limits, informational messages, client-side phase timings), table data paging, table/database DDL, row and column mutation, and dialect SQL via `createSQLBuilder(DatabaseType)`.
 
