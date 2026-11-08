@@ -93,6 +93,7 @@ std::unique_ptr<ISQLBuilder> createSQLBuilder(DatabaseType type) {
     case DatabaseType::ORACLE:
         return std::make_unique<OracleBuilder>();
     case DatabaseType::CASSANDRA:
+    case DatabaseType::SCYLLADB:
         return std::make_unique<CassandraBuilder>();
     case DatabaseType::DUCKDB:
         return std::make_unique<DuckDBBuilder>();
@@ -153,7 +154,7 @@ std::string ISQLBuilder::createTable(const Table& table, const std::string& sche
         }
 
         // CQL does not allow NOT NULL in CREATE TABLE
-        if (col.isNotNull && !col.isPrimaryKey && dbType != DatabaseType::CASSANDRA)
+        if (col.isNotNull && !col.isPrimaryKey && !isCassandraFamily(dbType))
             sql += " NOT NULL";
 
         if (col.isAutoIncrement && dbType != DatabaseType::SQLITE &&
@@ -222,7 +223,7 @@ std::string ISQLBuilder::tableDdl(const Table& table, const std::string& schemaP
             line += " DEFAULT " + col.defaultValue;
         if (col.isAutoIncrement && !isPostgresFamily(dbType))
             line += autoIncrementClause(dbType);
-        if (col.isNotNull && !col.isPrimaryKey && dbType != DatabaseType::CASSANDRA)
+        if (col.isNotNull && !col.isPrimaryKey && !isCassandraFamily(dbType))
             line += " NOT NULL";
         if (col.isPrimaryKey)
             pk.push_back(col.name);
@@ -236,7 +237,7 @@ std::string ISQLBuilder::tableDdl(const Table& table, const std::string& schemaP
     for (const auto& idx : table.indexes) {
         if (idx.isPrimary || idx.columns.empty())
             continue;
-        if (idx.isUnique && dbType != DatabaseType::CASSANDRA) {
+        if (idx.isUnique && !isCassandraFamily(dbType)) {
             lines.push_back(std::format("CONSTRAINT {} UNIQUE ({})", quoteIdentifier(idx.name),
                                         quoteList(idx.columns)));
         } else {

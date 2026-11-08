@@ -416,9 +416,13 @@ public:
     Status createDatabase(const CreateDatabaseOptions& opts) {
         if (!isOpen())
             return {false, "Not connected"};
-        const std::string cql =
-            "CREATE KEYSPACE IF NOT EXISTS " + quoteIdent(opts.name) +
-            " WITH replication = {'class':'SimpleStrategy','replication_factor':1}";
+        // scylladb's default tablets refuse SimpleStrategy; cassandra before 4.0 lacks the
+        // NetworkTopologyStrategy replication_factor shorthand
+        const char* strategy = info_.type == DatabaseType::SCYLLADB ? "NetworkTopologyStrategy"
+                                                                     : "SimpleStrategy";
+        const std::string cql = "CREATE KEYSPACE IF NOT EXISTS " + quoteIdent(opts.name) +
+                                " WITH replication = {'class':'" + strategy +
+                                "','replication_factor':1}";
         auto r = execute(cql, 0);
         return r.success() ? Status{true, ""} : Status{false, r.errorMessage()};
     }

@@ -16,7 +16,7 @@ namespace dearsql {
 
         bool sqlEngine(DatabaseType type) {
             return type != DatabaseType::MONGODB && type != DatabaseType::REDIS &&
-                   type != DatabaseType::CASSANDRA && type != DatabaseType::S3;
+                   !isCassandraFamily(type) && type != DatabaseType::S3;
         }
 
         std::string lower(std::string_view s) {

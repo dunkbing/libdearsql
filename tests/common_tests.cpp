@@ -97,7 +97,7 @@ TEST(EnumConversions, DatabaseTypeRoundTrip) {
     for (auto t : {DatabaseType::SQLITE, DatabaseType::POSTGRESQL, DatabaseType::MYSQL,
                    DatabaseType::MARIADB, DatabaseType::REDIS, DatabaseType::MONGODB,
                    DatabaseType::MSSQL, DatabaseType::ORACLE, DatabaseType::REDSHIFT,
-                   DatabaseType::CASSANDRA}) {
+                   DatabaseType::CASSANDRA, DatabaseType::SCYLLADB}) {
         EXPECT_EQ(stringToDatabaseType(databaseTypeToString(t)), t);
     }
 }

@@ -16,7 +16,7 @@ public:
     [[nodiscard]] bool isOpen() const override;
 
     [[nodiscard]] DatabaseType type() const override {
-        return DatabaseType::CASSANDRA;
+        return info_.type; // cassandra or scylladb
     }
     [[nodiscard]] const ConnectionInfo& info() const override {
         return info_;

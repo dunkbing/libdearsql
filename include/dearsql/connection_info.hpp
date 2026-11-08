@@ -18,7 +18,8 @@ enum class DatabaseType {
     DUCKDB,
     TIDB,        // speaks mysql
     COCKROACHDB, // speaks postgres
-    S3           // object storage: the host browses it; the library has no backend for it
+    S3,          // object storage: the host browses it; the library has no backend for it
+    SCYLLADB     // speaks cql: the cassandra backend
 };
 
 enum class SslMode { Disable, Allow, Prefer, Require, VerifyCA, VerifyFull, VerifyIdentity };
@@ -32,6 +33,7 @@ DatabaseType stringToDatabaseType(const std::string& typeStr);
 // wire-compatible families: one backend each, dialect quirks aside
 bool isPostgresFamily(DatabaseType type); // postgres, redshift, cockroachdb
 bool isMySQLFamily(DatabaseType type);    // mysql, mariadb, tidb
+bool isCassandraFamily(DatabaseType type); // cassandra, scylladb
 
 // connection info shared by all backends; SSH-free (the app handles tunneling
 // and rewrites host/port to the local forwarded endpoint before opening).

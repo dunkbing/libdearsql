@@ -138,6 +138,7 @@ namespace dearsql {
             case DatabaseType::COCKROACHDB:
             case DatabaseType::DUCKDB:
             case DatabaseType::CASSANDRA:
+            case DatabaseType::SCYLLADB:
                 d.dollarQuote = true;
                 break;
             default:
@@ -354,7 +355,7 @@ namespace dearsql {
             std::vector<std::string> kw;
             if (!isSqlDialect(type))
                 return kw;
-            if (type == DatabaseType::CASSANDRA) {
+            if (isCassandraFamily(type)) {
                 append(kw, {"SELECT",    "FROM",       "WHERE",        "AND",         "IN",
                             "INSERT",    "INTO",       "VALUES",       "UPDATE",      "SET",
                             "DELETE",    "CREATE",     "DROP",         "ALTER",       "TRUNCATE",
@@ -533,7 +534,7 @@ namespace dearsql {
             std::vector<std::string> fn;
             if (!isSqlDialect(type))
                 return fn;
-            if (type == DatabaseType::CASSANDRA) {
+            if (isCassandraFamily(type)) {
                 append(fn, {"COUNT",
                             "MIN",
                             "MAX",
@@ -2016,7 +2017,7 @@ namespace dearsql {
             return true;
         if (!isIdentStartByte(static_cast<unsigned char>(name[0])))
             return true;
-        const bool foldsLower = isPostgresFamily(type) || type == DatabaseType::CASSANDRA;
+        const bool foldsLower = isPostgresFamily(type) || isCassandraFamily(type);
         const bool foldsUpper = type == DatabaseType::ORACLE;
         for (const char ch : name) {
             const auto c = static_cast<unsigned char>(ch);

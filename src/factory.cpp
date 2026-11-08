@@ -35,6 +35,7 @@ ConnectionPtr makeConnection(const ConnectionInfo& info) {
     case DatabaseType::ORACLE:
         return std::make_shared<OracleConnection>(info);
     case DatabaseType::CASSANDRA:
+    case DatabaseType::SCYLLADB:
         return std::make_shared<CassandraConnection>(info);
     case DatabaseType::DUCKDB:
 #ifdef DEARSQL_HAS_DUCKDB

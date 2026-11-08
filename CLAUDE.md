@@ -7,7 +7,7 @@
 
 `libdearsql` is a C++20 static library that exposes a uniform synchronous API
 over SQLite, DuckDB (and CSV), PostgreSQL/Redshift/CockroachDB, MySQL/MariaDB/TiDB, MongoDB, Redis,
-MSSQL, Oracle, and Cassandra. Every SQL string and driver call of the DearSQL
+MSSQL, Oracle, and Cassandra/ScyllaDB. Every SQL string and driver call of the DearSQL
 app lives here; the app (and its terminal client / MCP server) is the host and
 adds only tunnels, threads, pools and UI state. New database behaviour is
 implemented here first. SSH tunneling
@@ -153,7 +153,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | Oracle        | 9     | + sequences, FREEPDB1 PDB, DBMS_METADATA DDL           |
 | MongoDB       | 7     | + collections-as-tables, JSON command execute          |
 | Redis         | 8     | + key types, TTL, SCAN, SELECT db                      |
-| Cassandra     | 8     | + keyspace as database, CQL                            |
+| Cassandra     | 8     | + keyspace as database, CQL; ScyllaDB runs on this backend |
 | Redshift      | 3     | reuses Postgres backend                                |
 | CockroachDB   | —     | Postgres backend; app runs the Postgres suite on it    |
 | TiDB          | —     | MySQL backend; app runs the MySQL suite on it          |

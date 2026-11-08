@@ -108,6 +108,8 @@ std::string databaseTypeToString(DatabaseType type) {
         return "cockroachdb";
     case DatabaseType::S3:
         return "s3";
+    case DatabaseType::SCYLLADB:
+        return "scylladb";
     }
     return "unknown";
 }
@@ -141,6 +143,8 @@ DatabaseType stringToDatabaseType(const std::string& s) {
         return DatabaseType::COCKROACHDB;
     if (s == "s3")
         return DatabaseType::S3;
+    if (s == "scylladb" || s == "scylla")
+        return DatabaseType::SCYLLADB;
     return DatabaseType::SQLITE;
 }
 
@@ -152,6 +156,10 @@ bool isPostgresFamily(DatabaseType type) {
 bool isMySQLFamily(DatabaseType type) {
     return type == DatabaseType::MYSQL || type == DatabaseType::MARIADB ||
            type == DatabaseType::TIDB;
+}
+
+bool isCassandraFamily(DatabaseType type) {
+    return type == DatabaseType::CASSANDRA || type == DatabaseType::SCYLLADB;
 }
 
 bool isCsvPath(const std::string& path) {
@@ -245,6 +253,7 @@ std::string ConnectionInfo::buildConnectionString(const std::string& dbName) con
         return "//" + host + ":" + std::to_string(port) + "/" + database;
 
     case DatabaseType::CASSANDRA:
+    case DatabaseType::SCYLLADB:
         return host + ":" + std::to_string(port);
 
     case DatabaseType::S3:
