@@ -51,4 +51,15 @@ namespace dearsql {
     [[nodiscard]] std::optional<Plan> parsePlan(DatabaseType type, const StatementResult& result,
                                                 bool analyzed);
 
+    // something in a plan worth a look, from fixed rules over the tree (no statistics, no
+    // i/o): a full scan a filter mostly throws away, a full scan repeated per outer row, a
+    // sort that spills or sorts a lot, a row estimate off by 10x (analyze), a temporary
+    // index sqlite builds per run. heuristics: a hint to check, never a verdict.
+    // node points into the plan it was made from
+    struct PlanWarning {
+        const PlanNode* node = nullptr;
+        std::string message;
+    };
+    [[nodiscard]] std::vector<PlanWarning> reviewPlan(const Plan& plan);
+
 } // namespace dearsql

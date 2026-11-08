@@ -108,3 +108,73 @@ TEST(Explain, PostgresParallelTimeIsNotMultiplied) {
     EXPECT_DOUBLE_EQ(*plan->root.children[0].totalTimeMs, 10.0);
     EXPECT_DOUBLE_EQ(*plan->root.selfTimeMs, 2.0);
 }
+
+namespace {
+    std::vector<std::string> messages(const std::optional<Plan>& plan) {
+        std::vector<std::string> out;
+        for (const auto& w : reviewPlan(*plan))
+            out.push_back(w.message);
+        return out;
+    }
+    bool mentions(const std::vector<std::string>& ms, std::string_view text) {
+        return std::ranges::any_of(ms, [&](const auto& m) { return m.find(text) != m.npos; });
+    }
+} // namespace
+
+TEST(Explain, ReviewPostgresFilteredScanLoopsSortAndEstimates) {
+    const auto plan = parsePlan(DatabaseType::POSTGRESQL, oneColumn(R"json([{
+      "Plan": {"Node Type": "Sort", "Plan Rows": 10, "Actual Rows": 5000, "Actual Loops": 1,
+               "Sort Method": "external merge", "Sort Space Used": 2048,
+        "Plans": [{"Node Type": "Nested Loop", "Plan Rows": 10, "Actual Rows": 5000,
+                   "Actual Loops": 1,
+          "Plans": [
+            {"Node Type": "Seq Scan", "Relation Name": "orders", "Alias": "o",
+             "Filter": "(status = 'open')", "Rows Removed by Filter": 99000,
+             "Plan Rows": 1000, "Actual Rows": 1000, "Actual Loops": 1},
+            {"Node Type": "Seq Scan", "Relation Name": "users", "Alias": "u",
+             "Plan Rows": 5, "Actual Rows": 5, "Actual Loops": 1000}
+          ]}]}}])json"),
+                                true);
+    const auto ms = messages(plan);
+    EXPECT_TRUE(mentions(ms, "Full scan of orders reads 100000 rows to keep 1000"));
+    EXPECT_TRUE(mentions(ms, "users is read in full once per row of the outer side (1000 times)"));
+    EXPECT_TRUE(mentions(ms, "spilled to disk (2048 kB)"));
+    EXPECT_TRUE(mentions(ms, "Expected 10 rows, got 5000"));
+    EXPECT_EQ(ms.size(), 5u) << "sort and join both misestimated";
+    EXPECT_EQ(reviewPlan(*plan)[0].node, &plan->root);
+}
+
+TEST(Explain, ReviewMysqlFilterAboveTableScan) {
+    const auto plan = parsePlan(DatabaseType::MYSQL,
+                                oneColumn("-> Filter: (t.a = 3)  (cost=1000 rows=50)\n"
+                                          "    -> Table scan on t  (cost=1000 rows=10000)\n"),
+                                false);
+    const auto ms = messages(plan);
+    ASSERT_EQ(ms.size(), 1u);
+    EXPECT_TRUE(mentions(ms, "Full scan of t reads 10000 rows to keep 50"));
+}
+
+TEST(Explain, ReviewSqliteJoinScanAndAutomaticIndex) {
+    StatementResult r;
+    r.columnNames = {"id", "parent", "notused", "detail"};
+    r.tableData = {{"2", "0", "0", "SCAN a"},
+                   {"4", "0", "0", "SCAN b"},
+                   {"6", "0", "0", "SEARCH c USING AUTOMATIC COVERING INDEX (k=?)"}};
+    const auto ms = messages(parsePlan(DatabaseType::SQLITE, r, false));
+    ASSERT_EQ(ms.size(), 2u);
+    EXPECT_TRUE(mentions(ms, "b is read in full once per row of the outer side."));
+    EXPECT_TRUE(mentions(ms, "temporary index on c"));
+}
+
+TEST(Explain, ReviewQuietOnGoodPlans) {
+    StatementResult r;
+    r.columnNames = {"id", "parent", "notused", "detail"};
+    r.tableData = {{"2", "0", "0", "SCAN a"}, {"5", "0", "0", "SEARCH b USING INDEX b_a (a_id=?)"}};
+    EXPECT_TRUE(messages(parsePlan(DatabaseType::SQLITE, r, false)).empty());
+    // a small filtered scan is fine
+    EXPECT_TRUE(messages(parsePlan(DatabaseType::POSTGRESQL, oneColumn(R"json([{"Plan":
+        {"Node Type": "Seq Scan", "Relation Name": "t", "Filter": "(a = 1)", "Total Cost": 35,
+         "Plan Rows": 3}}])json"),
+                                   false))
+                    .empty());
+}

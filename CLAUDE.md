@@ -57,7 +57,9 @@ generated) so it links next to libpq and libmariadb.
 Query plans are the same kind of thing: `include/dearsql/explain.hpp` / `src/explain.cpp`
 build the EXPLAIN statement per dialect (`explainSql`) and parse what the server
 returns into one `PlanNode` tree (`parsePlan`): Postgres JSON, MySQL `FORMAT=TREE`
-text, SQLite `EXPLAIN QUERY PLAN` rows. No I/O; the host runs it and decides when
+text, SQLite `EXPLAIN QUERY PLAN` rows. `reviewPlan` runs fixed rules over that tree
+(filtered and repeated full scans, big or spilled sorts, misestimates, SQLite automatic
+indexes) and returns worded hints pointing at nodes; keep it rule-based and data-free. No I/O; the host runs it and decides when
 ANALYZE (which executes the statement) is safe.
 
 Delete impact too: `include/dearsql/delete_impact.hpp` (`deleteEffects`) turns the
@@ -149,7 +151,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | TiDB          | —     | MySQL backend; app runs the MySQL suite on it          |
 | Common        | 7     | type/helper unit tests                                 |
 | Completion    | 17    | pure: contexts, scopes, quoting, dialects, resolve     |
-| Explain       | 6     | pure: postgres json, mysql tree, sqlite plan rows      |
+| Explain       | 10    | pure: postgres json, mysql tree, sqlite rows, plan review |
 | Syntax        | 5     | pg, sqlite, duckdb parsers; none for the rest          |
 
 ## Build

@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <format>
 #include <regex>
 #include <sstream>
 
@@ -348,6 +349,158 @@ namespace dearsql {
             fillSelfTimes(plan->root);
         }
         return plan;
+    }
+
+    // ---------- plan review ----------
+
+    namespace {
+
+        std::optional<std::string> property(const PlanNode& n, std::string_view key) {
+            for (const auto& [k, v] : n.properties) {
+                if (k == key) {
+                    return v;
+                }
+            }
+            return std::nullopt;
+        }
+
+        std::string rowCount(double v) {
+            return std::format("{}", static_cast<long long>(v + 0.5));
+        }
+
+        // postgres "Seq Scan", mysql "Table scan on t", sqlite "SCAN t" (not "SCAN t USING
+        // INDEX", which walks an index)
+        bool isFullScan(const PlanNode& n) {
+            const auto& op = n.operation;
+            if (op.ends_with("Seq Scan") || op.starts_with("Table scan on ")) {
+                return true;
+            }
+            return op.starts_with("SCAN ") && op.find(" USING ") == std::string::npos &&
+                   op != "SCAN CONSTANT ROW" && op.size() > 5 && op[5] != '(';
+        }
+
+        std::string tableOf(const PlanNode& n) {
+            const auto& op = n.operation;
+            std::string name;
+            if (op.starts_with("Table scan on ")) {
+                name = op.substr(14);
+            } else if (op.starts_with("SCAN ") || op.starts_with("SEARCH ")) {
+                name = op.substr(op.find(' ') + 1);
+            } else if (n.detail.starts_with("on ")) {
+                name = n.detail.substr(3);
+            }
+            return name.substr(0, name.find(' '));
+        }
+
+        // rows the node returns per loop: actual when analyzed, else the estimate
+        std::optional<double> rowsOut(const PlanNode& n, bool analyzed) {
+            return analyzed && n.actualRows ? n.actualRows : n.estimatedRows;
+        }
+
+        void review(const PlanNode& n, const PlanNode* parent, size_t index, bool analyzed,
+                    std::vector<PlanWarning>& out) {
+            const std::string table = tableOf(n);
+            const std::string what = table.empty() ? n.operation : table;
+
+            if (isFullScan(n)) {
+                // postgres: the filter sits on the scan; mysql: on a Filter node above it
+                const auto pgFilter = property(n, "Filter");
+                const bool mysqlFilter = parent && parent->operation.starts_with("Filter: ");
+                std::optional<double> read;
+                std::optional<double> kept;
+                if (pgFilter && analyzed && n.actualRows) {
+                    if (const auto removed = property(n, "Rows Removed by Filter")) {
+                        try {
+                            read = *n.actualRows + std::stod(*removed);
+                            kept = n.actualRows;
+                        } catch (...) {
+                        }
+                    }
+                } else if (mysqlFilter) {
+                    read = rowsOut(n, analyzed);
+                    kept = rowsOut(*parent, analyzed);
+                }
+                if (read && kept && *read >= 1000 && *kept * 10 <= *read) {
+                    out.push_back(
+                        {&n, std::format("Full scan of {} reads {} rows to keep {}{}. An index on "
+                                         "the filtered columns would read only the matches.",
+                                         what, rowCount(*read), rowCount(*kept),
+                                         pgFilter ? ", filter " + *pgFilter : "")});
+                } else if (pgFilter && !analyzed && n.cost && *n.cost >= 1000) {
+                    out.push_back(
+                        {&n, std::format("Full scan of {} with filter {}, estimated cost {}. "
+                                         "If the filter keeps few rows, an index on its columns "
+                                         "would avoid reading the whole table.",
+                                         what, *pgFilter, rowCount(*n.cost))});
+                }
+
+                // the inner side of a nested loop: read in full once per outer row
+                bool inner = false;
+                std::optional<double> outerRows;
+                if (parent && index > 0) {
+                    const auto& pop = parent->operation;
+                    const auto& first = parent->children.front();
+                    if (pop.find("Nested Loop") != std::string::npos ||
+                        pop.find("Nested loop") != std::string::npos) {
+                        inner = true;
+                        outerRows = rowsOut(first, analyzed);
+                    } else if (first.operation.starts_with("SCAN ") ||
+                               first.operation.starts_with("SEARCH ")) {
+                        inner = true; // sqlite: later scans of a join loop inside earlier ones
+                    }
+                }
+                const auto times = analyzed && n.loops ? n.loops : outerRows;
+                if (inner && (!times || *times >= 10)) {
+                    out.push_back(
+                        {&n, std::format("{} is read in full once per row of the outer "
+                                         "side{}. An index on its join columns would "
+                                         "turn each pass into a lookup.",
+                                         what, times ? " (" + rowCount(*times) + " times)" : "")});
+                }
+            }
+
+            const auto& op = n.operation;
+            if (op.find("AUTOMATIC") != std::string::npos &&
+                op.find("INDEX") != std::string::npos) {
+                out.push_back({&n, std::format("SQLite builds a temporary index on {} every time "
+                                               "this runs. CREATE INDEX it once instead.",
+                                               what)});
+            }
+            if (const auto method = property(n, "Sort Method");
+                method && method->find("external") != std::string::npos) {
+                const auto space = property(n, "Sort Space Used");
+                out.push_back({&n, std::format("The sort spilled to disk{}. More work_mem, or an "
+                                               "index matching the ORDER BY, would avoid it.",
+                                               space ? " (" + *space + " kB)" : "")});
+            } else if ((op == "Sort" || op.starts_with("Sort: ")) &&
+                       rowsOut(n, analyzed).value_or(0) >= 100000) {
+                out.push_back({&n, std::format("Sorts {} rows. An index matching the ORDER BY "
+                                               "would return them in order.",
+                                               rowCount(*rowsOut(n, analyzed)))});
+            }
+
+            if (analyzed && n.estimatedRows && n.actualRows && n.loops.value_or(1) > 0) {
+                const double est = std::max(*n.estimatedRows, 1.0);
+                const double act = std::max(*n.actualRows, 1.0);
+                if ((est / act >= 10 || act / est >= 10) && std::max(est, act) >= 1000) {
+                    out.push_back({&n, std::format("Expected {} rows, got {}: the table "
+                                                   "statistics may be stale (run ANALYZE), and "
+                                                   "the plan may be built on the wrong guess.",
+                                                   rowCount(est), rowCount(act))});
+                }
+            }
+
+            for (size_t i = 0; i < n.children.size(); ++i) {
+                review(n.children[i], &n, i, analyzed, out);
+            }
+        }
+
+    } // namespace
+
+    std::vector<PlanWarning> reviewPlan(const Plan& plan) {
+        std::vector<PlanWarning> out;
+        review(plan.root, nullptr, 0, plan.analyzed, out);
+        return out;
     }
 
 } // namespace dearsql

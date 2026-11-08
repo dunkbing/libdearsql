@@ -140,10 +140,15 @@ auto result = db->execute(*sql);
 if (auto plan = dearsql::parsePlan(type, result.statements.front(), false)) {
     // plan->root: PlanNode tree (operation, detail, estimatedRows, cost,
     // actualRows, loops, totalTimeMs, selfTimeMs, properties, children)
+    for (const auto& w : dearsql::reviewPlan(*plan)) {
+        // w.node points into *plan, w.message is a sentence for the user or an agent
+    }
 }
 ```
 
-Pure, like completion: the host runs the statement. PostgreSQL uses `EXPLAIN (FORMAT JSON)` (`ANALYZE, BUFFERS` with analyze), MySQL 8.0.16+ `EXPLAIN FORMAT=TREE` / `EXPLAIN ANALYZE` (8.0.18+), SQLite `EXPLAIN QUERY PLAN` (tree only, no numbers). Every other type, CockroachDB, Redshift, MariaDB and TiDB included, gets nullopt. Times are wall time: Postgres per-loop time × loops, except below a Gather where workers run concurrently; `selfTimeMs` is a node's time minus its children's. ANALYZE executes the statement, so deciding when that is safe is the host's job. Tests: `tests/explain_tests.cpp` (fixtures, no database).
+Pure, like completion: the host runs the statement. PostgreSQL uses `EXPLAIN (FORMAT JSON)` (`ANALYZE, BUFFERS` with analyze), MySQL 8.0.16+ `EXPLAIN FORMAT=TREE` / `EXPLAIN ANALYZE` (8.0.18+), SQLite `EXPLAIN QUERY PLAN` (tree only, no numbers). Every other type, CockroachDB, Redshift, MariaDB and TiDB included, gets nullopt. Times are wall time: Postgres per-loop time × loops, except below a Gather where workers run concurrently; `selfTimeMs` is a node's time minus its children's. ANALYZE executes the statement, so deciding when that is safe is the host's job.
+
+`reviewPlan` runs fixed rules over the tree and returns hints, each pointing at its node: a full scan whose filter keeps under a tenth of what it reads (at least 1,000 rows; with estimates only, a Postgres filtered scan costing 1,000 or more), a full scan on the inner side of a nested loop run 10 or more times (SQLite: any full scan after another scan or search in a join), a sort that spilled to disk or sorts 100,000+ rows, an analyzed row count 10x off its estimate (above 1,000 rows), and SQLite's per-run AUTOMATIC index. It reads no statistics and knows nothing of the data, so the messages are worded as things to check; deciding what to show, and when to suggest an index, is the host's. Tests: `tests/explain_tests.cpp` (fixtures, no database).
 
 ## Delete impact
 
