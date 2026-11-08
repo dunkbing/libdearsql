@@ -460,7 +460,21 @@ private:
             const std::string s = pem.str();
             if (cass_ssl_add_trusted_cert_n(st.ssl, s.data(), s.size()) != CASS_OK)
                 return {false, "Failed to add CA cert to SSL context"};
-            cass_ssl_set_verify_flags(st.ssl, CASS_SSL_VERIFY_PEER_CERT);
+            int flags = CASS_SSL_VERIFY_PEER_CERT;
+            // verify-full: each node's certificate must also name that node. the driver dials
+            // every node by ip (contact points resolved, the rest from system.peers), so a typed
+            // ip is checked against the certificate's ip entries, and a typed hostname
+            // against the name each node's ip resolves back to (reverse dns)
+            if (info_.sslmode == SslMode::VerifyFull || info_.sslmode == SslMode::VerifyIdentity) {
+                CassInet ip;
+                if (cass_inet_from_string(info_.host.c_str(), &ip) == CASS_OK) {
+                    flags |= CASS_SSL_VERIFY_PEER_IDENTITY;
+                } else {
+                    flags |= CASS_SSL_VERIFY_PEER_IDENTITY_DNS;
+                    cass_cluster_set_use_hostname_resolution(st.cluster, cass_true);
+                }
+            }
+            cass_ssl_set_verify_flags(st.ssl, flags);
         } else {
             // require: encrypt only
             cass_ssl_set_verify_flags(st.ssl, CASS_SSL_VERIFY_NONE);
