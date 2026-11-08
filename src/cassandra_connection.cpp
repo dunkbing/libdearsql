@@ -440,11 +440,18 @@ public:
 
 private:
     std::pair<bool, std::string> applySslConfig(DriverState& st) {
-        if (info_.sslmode == SslMode::Disable)
+        // the driver has no plaintext fallback, so allow/prefer stay plaintext
+        const bool verify = info_.sslmode == SslMode::VerifyCA ||
+                            info_.sslmode == SslMode::VerifyFull ||
+                            info_.sslmode == SslMode::VerifyIdentity;
+        if (!verify && info_.sslmode != SslMode::Require)
             return {true, ""};
+        // the driver reads no system trust store: verifying needs the CA
+        if (verify && info_.sslCACertPath.empty())
+            return {false, "TLS verification needs a CA certificate file"};
         st.ssl = cass_ssl_new();
 
-        if (info_.sslmode == SslMode::VerifyCA && !info_.sslCACertPath.empty()) {
+        if (verify) {
             std::ifstream f(info_.sslCACertPath, std::ios::binary);
             if (!f)
                 return {false, "Cannot read CA cert: " + info_.sslCACertPath};
@@ -455,7 +462,7 @@ private:
                 return {false, "Failed to add CA cert to SSL context"};
             cass_ssl_set_verify_flags(st.ssl, CASS_SSL_VERIFY_PEER_CERT);
         } else {
-            // require / no CA: encrypt only, do not verify
+            // require: encrypt only
             cass_ssl_set_verify_flags(st.ssl, CASS_SSL_VERIFY_NONE);
         }
 

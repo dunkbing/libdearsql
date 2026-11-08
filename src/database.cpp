@@ -245,6 +245,21 @@ std::string IDatabase::tableDdl(const std::string& tableName) {
             0, "\n");
         return indexes.empty() ? ddl : ddl + "\n" + indexes;
     }
+    case DatabaseType::CASSANDRA:
+    case DatabaseType::SCYLLADB: {
+        // server-side DESCRIBE (scylladb, cassandra 4+): the table with its options,
+        // indexes and views. older servers only have it in cqlsh: build it instead
+        const auto r = execute("DESCRIBE TABLE " + builder->quoteIdentifier(name()) + "." +
+                                   builder->quoteIdentifier(tableName),
+                               0);
+        if (r.statements.empty() || !r.statements.front().success)
+            break;
+        const auto& st = r.statements.front();
+        const auto col = std::ranges::find(st.columnNames, "create_statement");
+        if (col == st.columnNames.end())
+            break;
+        return nonEmpty(joined(st.tableData, col - st.columnNames.begin(), "\n"));
+    }
     case DatabaseType::MONGODB:
     case DatabaseType::REDIS:
         throw Error("no table DDL for this database type");
