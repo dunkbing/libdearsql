@@ -165,7 +165,37 @@ if (const auto* doc = dearsql::findingDoc("unindexed-fk")) {
 }
 ```
 
-Pure, over tables the host has described. `reviewIndexes` reports a foreign key with no index starting with its columns (any order; the primary key counts, also when the engine does not list it as an index), and an index whose columns lead another index, as an exact duplicate or a prefix of a wider one; the primary key is never reported, and a unique index only gives way to one unique on the same columns. Suggestions are hints with unquoted identifiers (`DROP INDEX name;` is not MySQL syntax), never run by the library. `findingDocs()` covers every code `reviewIndexes` and `reviewPlan` emit (`filtered-full-scan`, `repeated-full-scan`, `sort-spill`, `big-sort`, `misestimate`, `automatic-index`, `unindexed-fk`, `redundant-index`), engine-neutral, so hosts and agents quote the same words. It knows nothing of query patterns: an index a query needs only by its exact name, or one kept for a hint, still shows up. Tests: `tests/explain_tests.cpp` (`Findings.*`).
+Pure, over tables the host has described. `reviewIndexes` reports a foreign key with no index starting with its columns (any order; the primary key counts, also when the engine does not list it as an index), and an index whose columns lead another index, as an exact duplicate or a prefix of a wider one; the primary key is never reported, and a unique index only gives way to one unique on the same columns. Suggestions are hints with unquoted identifiers, never run by the library; pass the engine (`reviewIndexes(tables, type)`) for its `DROP INDEX` form (MySQL and SQL Server name the table). `findingDocs()` covers every code `reviewIndexes` and `reviewPlan` emit (`filtered-full-scan`, `repeated-full-scan`, `sort-spill`, `big-sort`, `misestimate`, `automatic-index`, `unindexed-fk`, `redundant-index`), engine-neutral, so hosts and agents quote the same words. It knows nothing of query patterns: an index a query needs only by its exact name, or one kept for a hint, still shows up. Tests: `tests/explain_tests.cpp` (`Findings.*`).
+
+## Schema diff
+
+```cpp
+#include <dearsql/schema_diff.hpp>
+
+std::vector<dearsql::Table> dev, prod; // describeTable() each, both sides
+if (dearsql::sameDialect(devType, prodType)) {
+    for (const auto& c : dearsql::diffSchemas(prod, dev, prodType, "public")) {
+        // c.kind (CreateTable .. DropTable, the order to run them in), c.table,
+        // c.message ("users: add column name text"), c.sql (empty: the engine cannot)
+    }
+}
+```
+
+Pure. The statements make the first side match the second, in the first side's dialect: new tables (`tableDdl`), added, changed and dropped columns (`addColumn`, `alterColumn`, `dropColumn`), indexes matched by columns and uniqueness rather than name (so a renamed index is no change; one that keeps its name but changes columns is dropped and recreated in one step), foreign keys grouped by constraint, and dropped tables last. Views are left out. Where the engine cannot (SQLite changing a column or adding a foreign key) `sql` is empty and the message says so; primary key changes are reported, not scripted. Compare only `sameDialect` pairs: type names from different engines never match. `dropIndexSql(type, index, table)` is the shared `DROP INDEX` form. Tests: `tests/schema_tools_tests.cpp`, and `Postgres.SchemaDiffAppliesCleanly` runs a generated script and diffs again to nothing.
+
+## Profiling
+
+```cpp
+#include <dearsql/profile.hpp>
+
+auto r = db->execute(*dearsql::profileSql(type, table), 0); // one bounded scan
+auto p = dearsql::parseProfile(type, table, r.statements.back());
+// p->rows, p->sampled, per column: nonNull, distinct (-1: not comparable), min, max
+auto top = dearsql::topValuesSql(type, table, column, 5); // value, count rows
+auto grid = dearsql::profileRowsSql(type, table); // one row per column, to show as is
+```
+
+Pure statement builders and a parser; the host runs them. Everything reads the first 100,000 rows the engine returns (`sample`; `LIMIT`, `TOP` or `ROWNUM`), not a random sample, so a big table costs one bounded scan, and only the first 64 columns. `MIN`/`MAX` are left out for types without an order (bool, uuid, json, binary, spatial, arrays) and `COUNT(DISTINCT)` for types without equality (json, lobs, xml, spatial), so one column never fails the statement. SQL engines only (not MongoDB, Redis, Cassandra). Tests: `tests/schema_tools_tests.cpp`, `Postgres.ProfileRunsOnEveryColumnType`.
 
 ## Delete impact
 
@@ -201,6 +231,8 @@ libdearsql/
 │   ├── completion.hpp           # sql completion + identifier resolution (pure)
 │   ├── explain.hpp              # explain statements + plan parsing (pure)
 │   ├── findings.hpp             # index review + finding docs (pure)
+│   ├── schema_diff.hpp          # statements that make one schema match another (pure)
+│   ├── profile.hpp              # column profiling statements + parser (pure)
 │   ├── syntax.hpp               # syntax checks with each engine's parser
 │   ├── query_result.hpp         # StatementResult, QueryResult
 │   ├── sql_builder.hpp          # dialect quoting + SQL generation

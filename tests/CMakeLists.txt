@@ -5,6 +5,7 @@ add_executable(dearsql_lib_tests
     completion_tests.cpp
     delete_impact_tests.cpp
     explain_tests.cpp
+    schema_tools_tests.cpp
     syntax_tests.cpp
     sqlite_tests.cpp
     postgres_tests.cpp

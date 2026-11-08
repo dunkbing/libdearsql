@@ -1,5 +1,7 @@
 #include "test_helpers.hpp"
 #include <algorithm>
+#include <dearsql/profile.hpp>
+#include <dearsql/schema_diff.hpp>
 
 using namespace dearsql;
 using namespace dearsql::testing;
@@ -415,4 +417,79 @@ TEST(Postgres, DeleteImpactCountsMatch) {
     auto schema = publicSchema(conn);
     ASSERT_TRUE(schema);
     checkDeleteImpact(*schema, DatabaseType::POSTGRESQL, "dearsql_lib_pg_impact");
+}
+
+// the profile query runs on postgres types min/max or distinct would reject
+TEST(Postgres, ProfileRunsOnEveryColumnType) {
+    OPEN_OR_SKIP(conn, st);
+    const std::string tbl = "dearsql_lib_pg_profile";
+    auto db = conn->database();
+    db->execute("DROP TABLE IF EXISTS " + tbl);
+    ASSERT_TRUE(db->execute("CREATE TABLE " + tbl +
+                            " (id INT, ok BOOLEAN, u UUID, j JSON, jb JSONB, at TIMESTAMPTZ, "
+                            "p POINT, tags TEXT[]);"
+                            "INSERT INTO " + tbl +
+                            " VALUES (1, true, gen_random_uuid(), '{}', '{}', now(), '(1,2)', "
+                            "'{a}'), (2, false, NULL, NULL, NULL, NULL, NULL, NULL)")
+                    .success());
+    auto t = publicSchema(conn)->describeTable(tbl);
+    auto r = db->execute(*profileRowsSql(DatabaseType::POSTGRESQL, t), 0);
+    ASSERT_TRUE(r.success()) << r.errorMessage();
+    EXPECT_EQ(r.statements.back().tableData.size(), 8u);
+    r = db->execute(*profileSql(DatabaseType::POSTGRESQL, t), 0);
+    ASSERT_TRUE(r.success()) << r.errorMessage();
+    ASSERT_TRUE(parseProfile(DatabaseType::POSTGRESQL, t, r.statements.back()));
+    r = db->execute(*topValuesSql(DatabaseType::POSTGRESQL, t, t.columns[1]), 0);
+    ASSERT_TRUE(r.success()) << r.errorMessage();
+    db->execute("DROP TABLE " + tbl);
+}
+
+// the diff's statements, run on the old side, leave nothing to diff
+TEST(Postgres, SchemaDiffAppliesCleanly) {
+    OPEN_OR_SKIP(conn, st);
+    auto db = conn->database();
+    const std::string s = "dearsql_lib_pg_diff";
+    db->execute("DROP SCHEMA IF EXISTS " + s + " CASCADE");
+    ASSERT_TRUE(db->execute("CREATE SCHEMA " + s + ";"
+                            "CREATE TABLE " + s + ".parent (id INT PRIMARY KEY);"
+                            "CREATE TABLE " + s + ".t (id INT PRIMARY KEY, a TEXT, gone INT);"
+                            "CREATE INDEX t_a ON " + s + ".t (a);"
+                            "CREATE TABLE " + s + ".old_t (id INT)")
+                    .success());
+    db->execute("DROP TABLE IF EXISTS public.dearsql_diff_t, public.parent CASCADE");
+    ASSERT_TRUE(db->execute("CREATE TABLE public.parent (id INT PRIMARY KEY);"
+                            "CREATE TABLE public.t (id INT PRIMARY KEY, a VARCHAR(20) NOT NULL "
+                            "DEFAULT 'x', b INT REFERENCES public.parent(id));"
+                            "CREATE UNIQUE INDEX t_b ON public.t (b)")
+                    .success());
+    auto load = [&](const std::string& schema) {
+        DatabasePtr h;
+        for (auto& x : db->schemas())
+            if (x && x->name() == schema)
+                h = x;
+        std::vector<Table> out;
+        for (const auto& name : {"parent", "t", "old_t"}) {
+            try {
+                auto t = h->describeTable(name);
+                if (!t.columns.empty())
+                    out.push_back(t);
+            } catch (...) {
+            }
+        }
+        return out;
+    };
+    const auto changes = diffSchemas(load(s), load("public"), DatabaseType::POSTGRESQL, s);
+    ASSERT_FALSE(changes.empty());
+    std::string script;
+    for (const auto& c : changes)
+        script += c.sql + "\n";
+    auto r = db->execute(script, 0);
+    EXPECT_TRUE(r.success()) << r.errorMessage() << "\n" << script;
+    const auto again = diffSchemas(load(s), load("public"), DatabaseType::POSTGRESQL, s);
+    std::string left;
+    for (const auto& c : again)
+        left += c.message + "\n";
+    EXPECT_TRUE(again.empty()) << left;
+    db->execute("DROP SCHEMA " + s + " CASCADE");
+    db->execute("DROP TABLE public.t, public.parent CASCADE");
 }

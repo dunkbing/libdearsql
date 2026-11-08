@@ -91,6 +91,8 @@ add_library(libdearsql STATIC
     src/delete_impact.cpp
     src/explain.cpp
     src/findings.cpp
+    src/profile.cpp
+    src/schema_diff.cpp
     src/syntax.cpp
     src/database.cpp
     src/connection_info.cpp

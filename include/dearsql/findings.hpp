@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dearsql/connection_info.hpp"
 #include "dearsql/types.hpp"
 
 #include <string>
@@ -34,7 +35,10 @@ namespace dearsql {
     // tables as describeTable returns them (columns, indexes, foreign keys). a foreign key
     // with no index starting with its columns (the primary key counts), and an index whose
     // columns lead another index (an exact duplicate, or a prefix of a wider one), unless
+    // it is the primary key or a unique index the other does not replace. type: the engine,
+    // for the DROP INDEX form (MySQL and SQL Server name the table)
     // it is the primary key or a unique index the other does not replace
-    [[nodiscard]] std::vector<IndexFinding> reviewIndexes(const std::vector<Table>& tables);
+    [[nodiscard]] std::vector<IndexFinding> reviewIndexes(const std::vector<Table>& tables,
+                                                            DatabaseType type = DatabaseType::SQLITE);
 
 } // namespace dearsql

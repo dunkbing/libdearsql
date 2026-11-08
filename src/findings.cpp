@@ -1,4 +1,5 @@
 #include "dearsql/findings.hpp"
+#include "dearsql/schema_diff.hpp"
 
 #include <algorithm>
 #include <format>
@@ -94,7 +95,7 @@ namespace dearsql {
         }
     } // namespace
 
-    std::vector<IndexFinding> reviewIndexes(const std::vector<Table>& tables) {
+    std::vector<IndexFinding> reviewIndexes(const std::vector<Table>& tables, DatabaseType type) {
         std::vector<IndexFinding> out;
         for (const auto& t : tables) {
             const std::string table = t.schema.empty() ? t.name : t.schema + "." + t.name;
@@ -188,7 +189,7 @@ namespace dearsql {
                                             "same lookups.",
                                             table, a->name, joined(a->columns), b->name,
                                             joined(b->columns)),
-                         std::format("DROP INDEX {};", a->name)});
+                         dropIndexSql(type, a->name, table)});
                     break;
                 }
             }

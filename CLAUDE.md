@@ -66,6 +66,8 @@ Findings too: `include/dearsql/findings.hpp` (`reviewIndexes` over described tab
 foreign keys, duplicate and prefix indexes; `findingDoc(code)` with fixed text for every code
 it and `reviewPlan` emit). Pure; a new rule adds its code to `findingDocs()` in the same commit.
 
+Schema diff and profiling too: `include/dearsql/schema_diff.hpp` (`diffSchemas(from, to, type, schema)`: the statements, in from's dialect and run order, that give `from` the tables, columns, indexes and foreign keys of `to`; views left out, indexes matched by columns not name, an empty `sql` where the engine cannot; `sameDialect`, `dropIndexSql`) and `include/dearsql/profile.hpp` (`profileSql`/`parseProfile`, `topValuesSql`, `profileRowsSql`: per-column nulls, distinct, min/max over the first 100,000 rows, aggregates only where the type allows them). Both pure; the host describes the tables and runs the statements.
+
 Delete impact too: `include/dearsql/delete_impact.hpp` (`deleteEffects`) turns the
 catalog's foreign keys (`onDelete` read on every server engine and SQLite) into one
 `COUNT(*)` per effect, nested `EXISTS` down cascade chains, for the host to run. SQLite
@@ -102,6 +104,8 @@ libdearsql/
 │   ├── completion.hpp             — pure sql completion + identifier resolution
 │   ├── delete_impact.hpp          — what a delete does through foreign keys (pure)
 │   ├── explain.hpp                — explain statements + plan parsing (pure)
+│   ├── schema_diff.hpp            — statements that make one schema match another (pure)
+│   ├── profile.hpp                — column profiling statements + parser (pure)
 │   ├── syntax.hpp                 — syntax checks with each engine's parser
 │   └── backends/                  — one header per backend
 ├── src/
@@ -143,7 +147,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | ------------- | ----- | ------------------------------------------------------ |
 | SQLite        | 16    | full, + table DDL round trip and builder fallback      |
 | DuckDB        | 6     | + foreign keys, csv view and row filter, parallel handles, DDL |
-| PostgreSQL    | 20    | + schemas, sequences, routines, matviews, catalog DDL  |
+| PostgreSQL    | 22    | + schemas, sequences, routines, matviews, catalog DDL  |
 | MySQL         | 14    | + AUTO_INCREMENT detect, routines, SHOW CREATE TABLE   |
 | MSSQL         | 11    | + dbo schema, OFFSET/FETCH paging, builder DDL         |
 | Oracle        | 9     | + sequences, FREEPDB1 PDB, DBMS_METADATA DDL           |
@@ -156,6 +160,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | Common        | 7     | type/helper unit tests                                 |
 | Completion    | 17    | pure: contexts, scopes, quoting, dialects, resolve     |
 | Explain       | 12    | pure: plans per dialect, plan review, findings, index review |
+| Schema tools  | 6     | pure: schema diff, profile statements; profile run on SQLite |
 | Syntax        | 5     | pg, sqlite, duckdb parsers; none for the rest          |
 
 ## Build

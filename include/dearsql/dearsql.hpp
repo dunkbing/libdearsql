@@ -7,6 +7,8 @@
 #include "delete_impact.hpp"
 #include "explain.hpp"
 #include "findings.hpp"
+#include "profile.hpp"
+#include "schema_diff.hpp"
 #include "syntax.hpp"
 #include "factory.hpp"
 #include "query_result.hpp"
