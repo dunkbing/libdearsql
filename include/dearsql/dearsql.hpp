@@ -6,6 +6,7 @@
 #include "database.hpp"
 #include "delete_impact.hpp"
 #include "explain.hpp"
+#include "findings.hpp"
 #include "syntax.hpp"
 #include "factory.hpp"
 #include "query_result.hpp"

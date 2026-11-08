@@ -425,13 +425,13 @@ namespace dearsql {
                         {&n, std::format("Full scan of {} reads {} rows to keep {}{}. An index on "
                                          "the filtered columns would read only the matches.",
                                          what, rowCount(*read), rowCount(*kept),
-                                         pgFilter ? ", filter " + *pgFilter : "")});
+                                         pgFilter ? ", filter " + *pgFilter : ""), "filtered-full-scan"});
                 } else if (pgFilter && !analyzed && n.cost && *n.cost >= 1000) {
                     out.push_back(
                         {&n, std::format("Full scan of {} with filter {}, estimated cost {}. "
                                          "If the filter keeps few rows, an index on its columns "
                                          "would avoid reading the whole table.",
-                                         what, *pgFilter, rowCount(*n.cost))});
+                                         what, *pgFilter, rowCount(*n.cost)), "filtered-full-scan"});
                 }
 
                 // the inner side of a nested loop: read in full once per outer row
@@ -455,7 +455,7 @@ namespace dearsql {
                         {&n, std::format("{} is read in full once per row of the outer "
                                          "side{}. An index on its join columns would "
                                          "turn each pass into a lookup.",
-                                         what, times ? " (" + rowCount(*times) + " times)" : "")});
+                                         what, times ? " (" + rowCount(*times) + " times)" : ""), "repeated-full-scan"});
                 }
             }
 
@@ -464,19 +464,19 @@ namespace dearsql {
                 op.find("INDEX") != std::string::npos) {
                 out.push_back({&n, std::format("SQLite builds a temporary index on {} every time "
                                                "this runs. CREATE INDEX it once instead.",
-                                               what)});
+                                               what), "automatic-index"});
             }
             if (const auto method = property(n, "Sort Method");
                 method && method->find("external") != std::string::npos) {
                 const auto space = property(n, "Sort Space Used");
                 out.push_back({&n, std::format("The sort spilled to disk{}. More work_mem, or an "
                                                "index matching the ORDER BY, would avoid it.",
-                                               space ? " (" + *space + " kB)" : "")});
+                                               space ? " (" + *space + " kB)" : ""), "sort-spill"});
             } else if ((op == "Sort" || op.starts_with("Sort: ")) &&
                        rowsOut(n, analyzed).value_or(0) >= 100000) {
                 out.push_back({&n, std::format("Sorts {} rows. An index matching the ORDER BY "
                                                "would return them in order.",
-                                               rowCount(*rowsOut(n, analyzed)))});
+                                               rowCount(*rowsOut(n, analyzed))), "big-sort"});
             }
 
             if (analyzed && n.estimatedRows && n.actualRows && n.loops.value_or(1) > 0) {
@@ -486,7 +486,7 @@ namespace dearsql {
                     out.push_back({&n, std::format("Expected {} rows, got {}: the table "
                                                    "statistics may be stale (run ANALYZE), and "
                                                    "the plan may be built on the wrong guess.",
-                                                   rowCount(est), rowCount(act))});
+                                                   rowCount(est), rowCount(act)), "misestimate"});
                 }
             }
 

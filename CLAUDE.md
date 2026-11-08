@@ -62,6 +62,10 @@ text, SQLite `EXPLAIN QUERY PLAN` rows. `reviewPlan` runs fixed rules over that 
 indexes) and returns worded hints pointing at nodes; keep it rule-based and data-free. No I/O; the host runs it and decides when
 ANALYZE (which executes the statement) is safe.
 
+Findings too: `include/dearsql/findings.hpp` (`reviewIndexes` over described tables: unindexed
+foreign keys, duplicate and prefix indexes; `findingDoc(code)` with fixed text for every code
+it and `reviewPlan` emit). Pure; a new rule adds its code to `findingDocs()` in the same commit.
+
 Delete impact too: `include/dearsql/delete_impact.hpp` (`deleteEffects`) turns the
 catalog's foreign keys (`onDelete` read on every server engine and SQLite) into one
 `COUNT(*)` per effect, nested `EXISTS` down cascade chains, for the host to run. SQLite
@@ -139,7 +143,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | ------------- | ----- | ------------------------------------------------------ |
 | SQLite        | 16    | full, + table DDL round trip and builder fallback      |
 | DuckDB        | 6     | + foreign keys, csv view and row filter, parallel handles, DDL |
-| PostgreSQL    | 17    | + schemas, sequences, routines, matviews, catalog DDL  |
+| PostgreSQL    | 20    | + schemas, sequences, routines, matviews, catalog DDL  |
 | MySQL         | 14    | + AUTO_INCREMENT detect, routines, SHOW CREATE TABLE   |
 | MSSQL         | 11    | + dbo schema, OFFSET/FETCH paging, builder DDL         |
 | Oracle        | 9     | + sequences, FREEPDB1 PDB, DBMS_METADATA DDL           |
@@ -151,7 +155,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | TiDB          | —     | MySQL backend; app runs the MySQL suite on it          |
 | Common        | 7     | type/helper unit tests                                 |
 | Completion    | 17    | pure: contexts, scopes, quoting, dialects, resolve     |
-| Explain       | 10    | pure: postgres json, mysql tree, sqlite rows, plan review |
+| Explain       | 12    | pure: plans per dialect, plan review, findings, index review |
 | Syntax        | 5     | pg, sqlite, duckdb parsers; none for the rest          |
 
 ## Build

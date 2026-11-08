@@ -90,6 +90,7 @@ add_library(libdearsql STATIC
     src/completion.cpp
     src/delete_impact.cpp
     src/explain.cpp
+    src/findings.cpp
     src/syntax.cpp
     src/database.cpp
     src/connection_info.cpp

@@ -59,6 +59,7 @@ namespace dearsql {
     struct PlanWarning {
         const PlanNode* node = nullptr;
         std::string message;
+        std::string code; // "filtered-full-scan"...; findingDoc(code) in findings.hpp explains it
     };
     [[nodiscard]] std::vector<PlanWarning> reviewPlan(const Plan& plan);
 

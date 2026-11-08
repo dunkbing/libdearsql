@@ -1,4 +1,5 @@
 #include <dearsql/explain.hpp>
+#include <dearsql/findings.hpp>
 #include <gtest/gtest.h>
 
 using namespace dearsql;
@@ -177,4 +178,62 @@ TEST(Explain, ReviewQuietOnGoodPlans) {
          "Plan Rows": 3}}])json"),
                                    false))
                     .empty());
+}
+
+TEST(Findings, EveryCodeHasADoc) {
+    for (const auto* code : {"filtered-full-scan", "repeated-full-scan", "sort-spill", "big-sort",
+                             "misestimate", "automatic-index", "unindexed-fk", "redundant-index"})
+        EXPECT_NE(findingDoc(code), nullptr) << code;
+    EXPECT_EQ(findingDoc("nope"), nullptr);
+    // plan warnings carry their code
+    StatementResult r;
+    r.columnNames = {"id", "parent", "notused", "detail"};
+    r.tableData = {{"2", "0", "0", "SCAN a"}, {"4", "0", "0", "SCAN b"}};
+    const auto ws = reviewPlan(*parsePlan(DatabaseType::SQLITE, r, false));
+    ASSERT_EQ(ws.size(), 1u);
+    EXPECT_EQ(ws[0].code, "repeated-full-scan");
+}
+
+TEST(Findings, ReviewIndexes) {
+    auto col = [](const char* name, bool pk = false) {
+        Column c;
+        c.name = name;
+        c.isPrimaryKey = pk;
+        return c;
+    };
+    Table orders;
+    orders.name = "orders";
+    orders.schema = "public";
+    orders.columns = {col("id", true), col("user_id"), col("shop_id"), col("region"),
+                      col("created_at")};
+    orders.foreignKeys = {
+        {.name = "fk_user", .sourceColumn = "user_id", .targetTable = "users"},
+        {.name = "fk_shop", .sourceColumn = "shop_id", .targetTable = "shops"},
+        {.name = "fk_shop", .sourceColumn = "region", .targetTable = "shops"},
+        {.name = "fk_self", .sourceColumn = "id", .targetTable = "legacy"}};
+    orders.indexes = {
+        {.name = "orders_user", .columns = {"user_id"}},
+        {.name = "orders_user_created", .columns = {"user_id", "created_at"}},
+        {.name = "orders_region_shop", .columns = {"region", "shop_id"}},
+        {.name = "orders_created", .columns = {"created_at"}},
+        {.name = "orders_created_2", .columns = {"created_at"}},
+        {.name = "orders_created_u", .columns = {"created_at"}, .isUnique = true}};
+    Table items;
+    items.name = "items";
+    items.columns = {col("id", true), col("order_id")};
+    items.foreignKeys = {{.name = "fk_order", .sourceColumn = "order_id", .targetTable = "orders"}};
+
+    const auto fs = reviewIndexes({orders, items});
+    std::vector<std::string> got;
+    for (const auto& f : fs)
+        got.push_back(f.code + " " + f.message);
+    // composite fk in another column order and the pk-covered fk are fine
+    ASSERT_EQ(fs.size(), 4u) << ::testing::PrintToString(got);
+    EXPECT_TRUE(mentions(got, "redundant-index public.orders: index orders_user (user_id) leads "
+                              "orders_user_created"));
+    // two plain duplicates of a unique index: both go, the unique one stays
+    EXPECT_TRUE(mentions(got, "index orders_created (created_at) duplicates orders_created_u"));
+    EXPECT_TRUE(mentions(got, "index orders_created_2 (created_at) duplicates orders_created_u"));
+    EXPECT_TRUE(mentions(got, "unindexed-fk items (order_id) references orders"));
+    EXPECT_EQ(fs.back().suggestion, "CREATE INDEX idx_items_order_id ON items (order_id);");
 }

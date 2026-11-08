@@ -148,7 +148,24 @@ if (auto plan = dearsql::parsePlan(type, result.statements.front(), false)) {
 
 Pure, like completion: the host runs the statement. PostgreSQL uses `EXPLAIN (FORMAT JSON)` (`ANALYZE, BUFFERS` with analyze), MySQL 8.0.16+ `EXPLAIN FORMAT=TREE` / `EXPLAIN ANALYZE` (8.0.18+), SQLite `EXPLAIN QUERY PLAN` (tree only, no numbers). Every other type, CockroachDB, Redshift, MariaDB and TiDB included, gets nullopt. Times are wall time: Postgres per-loop time × loops, except below a Gather where workers run concurrently; `selfTimeMs` is a node's time minus its children's. ANALYZE executes the statement, so deciding when that is safe is the host's job.
 
-`reviewPlan` runs fixed rules over the tree and returns hints, each pointing at its node: a full scan whose filter keeps under a tenth of what it reads (at least 1,000 rows; with estimates only, a Postgres filtered scan costing 1,000 or more), a full scan on the inner side of a nested loop run 10 or more times (SQLite: any full scan after another scan or search in a join), a sort that spilled to disk or sorts 100,000+ rows, an analyzed row count 10x off its estimate (above 1,000 rows), and SQLite's per-run AUTOMATIC index. It reads no statistics and knows nothing of the data, so the messages are worded as things to check; deciding what to show, and when to suggest an index, is the host's. Tests: `tests/explain_tests.cpp` (fixtures, no database).
+`reviewPlan` runs fixed rules over the tree and returns hints, each pointing at its node and carrying a finding code (see below): a full scan whose filter keeps under a tenth of what it reads (at least 1,000 rows; with estimates only, a Postgres filtered scan costing 1,000 or more), a full scan on the inner side of a nested loop run 10 or more times (SQLite: any full scan after another scan or search in a join), a sort that spilled to disk or sorts 100,000+ rows, an analyzed row count 10x off its estimate (above 1,000 rows), and SQLite's per-run AUTOMATIC index. It reads no statistics and knows nothing of the data, so the messages are worded as things to check; deciding what to show, and when to suggest an index, is the host's. Tests: `tests/explain_tests.cpp` (fixtures, no database).
+
+## Findings
+
+```cpp
+#include <dearsql/findings.hpp>
+
+std::vector<dearsql::Table> tables; // describeTable() each: listings may skip indexes
+for (const auto& f : dearsql::reviewIndexes(tables)) {
+    // f.code "unindexed-fk" | "redundant-index", f.table, f.message,
+    // f.suggestion ("CREATE INDEX idx_orders_user_id ON orders (user_id);")
+}
+if (const auto* doc = dearsql::findingDoc("unindexed-fk")) {
+    // doc->title, meaning, check, fix, ignore: fixed text to show or hand to an agent
+}
+```
+
+Pure, over tables the host has described. `reviewIndexes` reports a foreign key with no index starting with its columns (any order; the primary key counts, also when the engine does not list it as an index), and an index whose columns lead another index, as an exact duplicate or a prefix of a wider one; the primary key is never reported, and a unique index only gives way to one unique on the same columns. Suggestions are hints with unquoted identifiers (`DROP INDEX name;` is not MySQL syntax), never run by the library. `findingDocs()` covers every code `reviewIndexes` and `reviewPlan` emit (`filtered-full-scan`, `repeated-full-scan`, `sort-spill`, `big-sort`, `misestimate`, `automatic-index`, `unindexed-fk`, `redundant-index`), engine-neutral, so hosts and agents quote the same words. It knows nothing of query patterns: an index a query needs only by its exact name, or one kept for a hint, still shows up. Tests: `tests/explain_tests.cpp` (`Findings.*`).
 
 ## Delete impact
 
@@ -183,6 +200,7 @@ libdearsql/
 │   ├── types.hpp                # Column, Index, ForeignKey, Routine, Table
 │   ├── completion.hpp           # sql completion + identifier resolution (pure)
 │   ├── explain.hpp              # explain statements + plan parsing (pure)
+│   ├── findings.hpp             # index review + finding docs (pure)
 │   ├── syntax.hpp               # syntax checks with each engine's parser
 │   ├── query_result.hpp         # StatementResult, QueryResult
 │   ├── sql_builder.hpp          # dialect quoting + SQL generation
@@ -205,6 +223,7 @@ libdearsql/
 │   ├── types.cpp
 │   ├── completion.cpp
 │   ├── explain.cpp
+│   ├── findings.cpp
 │   ├── connection_info.cpp
 │   ├── factory.cpp
 │   ├── database.cpp             # IDatabase builder-based defaults
