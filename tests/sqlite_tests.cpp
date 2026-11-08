@@ -302,3 +302,11 @@ TEST(SQLBuilder, TableDdlFallback) {
               ");\n"
               "CREATE INDEX [orders_user] ON [dbo].[orders] ([user_id]);");
 }
+
+// foreign keys are enforced from the start, like on every other engine
+TEST(SQLite, ForeignKeysOnByDefault) {
+    auto conn = openMem();
+    auto r = conn->database()->execute("PRAGMA foreign_keys");
+    ASSERT_TRUE(r.success());
+    EXPECT_EQ(r[0].tableData[0][0], "1");
+}

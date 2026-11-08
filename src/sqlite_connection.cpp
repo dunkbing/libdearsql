@@ -37,6 +37,9 @@ Status openHandle(const ConnectionInfo& info, sqlite3** out) {
         sqlite3_close(db);
         return {false, err};
     }
+    // sqlite ships with foreign keys unenforced; on, deletes cascade and fail as declared,
+    // like every other engine. a session can still turn them off with the pragma
+    sqlite3_exec(db, "PRAGMA foreign_keys = ON", nullptr, nullptr, nullptr);
     *out = db;
     return {true, ""};
 }

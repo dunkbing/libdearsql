@@ -32,7 +32,6 @@ TEST(DeleteImpact, CountsMatchTheRealDelete) {
     ASSERT_TRUE(conn && conn->open().first);
     auto& db = *conn->database();
     for (const char* sql : {
-             "PRAGMA foreign_keys = ON",
              "CREATE TABLE customers (id INTEGER PRIMARY KEY, referrer INTEGER REFERENCES "
              "customers(id) ON DELETE CASCADE)",
              "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES "
