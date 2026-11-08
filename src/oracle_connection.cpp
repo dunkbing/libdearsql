@@ -571,7 +571,7 @@ OracleDatabase::foreignKeys(const std::string& tableName) {
         tableName.empty() ? "" : std::format(" AND ac.TABLE_NAME = '{}'", escapeLiteral(tableName));
     for (const auto& row :
          query(std::format("SELECT ac.TABLE_NAME, ac.CONSTRAINT_NAME, acc.COLUMN_NAME, "
-                           "rc.TABLE_NAME, rcc.COLUMN_NAME "
+                           "rc.TABLE_NAME, rcc.COLUMN_NAME, ac.DELETE_RULE "
                            "FROM ALL_CONSTRAINTS ac "
                            "JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME "
                            "AND ac.OWNER = acc.OWNER "
@@ -589,6 +589,8 @@ OracleDatabase::foreignKeys(const std::string& tableName) {
         fk.sourceColumn = row[2];
         fk.targetTable = row[3];
         fk.targetColumn = row[4];
+        if (row.size() > 5)
+            fk.onDelete = row[5];
         out[row[0]].push_back(std::move(fk));
     }
     return out;

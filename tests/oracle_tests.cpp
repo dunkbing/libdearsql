@@ -158,3 +158,8 @@ TEST(Oracle, TableDdlFromMetadata) {
     EXPECT_EQ(ddl.find("TABLESPACE"), std::string::npos) << ddl;
     db->execute("DROP TABLE dearsql_ddl_t PURGE", 0);
 }
+
+TEST(Oracle, DeleteImpactCountsMatch) {
+    OPEN_OR_SKIP(conn, st);
+    checkDeleteImpact(*conn->database(), DatabaseType::ORACLE, "dl_ora_impact");
+}

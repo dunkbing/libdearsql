@@ -419,7 +419,8 @@ namespace dearsql {
                      db, std::format("SELECT OBJECT_NAME(fk.parent_object_id), fk.name, "
                                      "COL_NAME(fkc.parent_object_id, fkc.parent_column_id), "
                                      "OBJECT_NAME(fkc.referenced_object_id), "
-                                     "COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) "
+                                     "COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id), "
+                                     "REPLACE(fk.delete_referential_action_desc, '_', ' ') "
                                      "FROM sys.foreign_keys fk "
                                      "JOIN sys.foreign_key_columns fkc "
                                      "ON fk.object_id = fkc.constraint_object_id "
@@ -432,6 +433,8 @@ namespace dearsql {
                 fk.sourceColumn = row[2];
                 fk.targetTable = row[3];
                 fk.targetColumn = row[4];
+                if (row.size() > 5)
+                    fk.onDelete = row[5];
                 tableFks[row[0]].push_back(std::move(fk));
             }
 
@@ -612,7 +615,8 @@ namespace dearsql {
                      db, std::format("SELECT fk.name, "
                                      "COL_NAME(fkc.parent_object_id, fkc.parent_column_id), "
                                      "OBJECT_NAME(fkc.referenced_object_id), "
-                                     "COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) "
+                                     "COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id), "
+                                     "REPLACE(fk.delete_referential_action_desc, '_', ' ') "
                                      "FROM sys.foreign_keys fk "
                                      "JOIN sys.foreign_key_columns fkc "
                                      "ON fk.object_id = fkc.constraint_object_id "
@@ -625,6 +629,8 @@ namespace dearsql {
                 fk.sourceColumn = row[1];
                 fk.targetTable = row[2];
                 fk.targetColumn = row[3];
+                if (row.size() > 4)
+                    fk.onDelete = row[4];
                 t.foreignKeys.push_back(std::move(fk));
             }
 

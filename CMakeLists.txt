@@ -88,6 +88,7 @@ include(cmake/CassandraDriver.cmake)
 add_library(libdearsql STATIC
     src/types.cpp
     src/completion.cpp
+    src/delete_impact.cpp
     src/explain.cpp
     src/syntax.cpp
     src/database.cpp

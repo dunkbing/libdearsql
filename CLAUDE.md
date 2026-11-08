@@ -60,6 +60,11 @@ returns into one `PlanNode` tree (`parsePlan`): Postgres JSON, MySQL `FORMAT=TRE
 text, SQLite `EXPLAIN QUERY PLAN` rows. No I/O; the host runs it and decides when
 ANALYZE (which executes the statement) is safe.
 
+Delete impact too: `include/dearsql/delete_impact.hpp` (`deleteEffects`) turns the
+catalog's foreign keys (`onDelete` read on every server engine and SQLite) into one
+`COUNT(*)` per effect, nested `EXISTS` down cascade chains, for the host to run. SQLite
+keys get one name per constraint id, so a composite key stays one `ForeignKey` group.
+
 Common types live in `dearsql::` namespace:
 - `Column`, `Index`, `ForeignKey`, `Routine`, `Table` (`include/dearsql/types.hpp`)
 - `StatementResult`, `QueryResult` (`include/dearsql/query_result.hpp`)
@@ -89,6 +94,7 @@ libdearsql/
 │   ├── dearsql.hpp                — umbrella
 │   ├── types.hpp / query_result.hpp / connection_info.hpp / database.hpp / factory.hpp
 │   ├── completion.hpp             — pure sql completion + identifier resolution
+│   ├── delete_impact.hpp          — what a delete does through foreign keys (pure)
 │   ├── explain.hpp                — explain statements + plan parsing (pure)
 │   ├── syntax.hpp                 — syntax checks with each engine's parser
 │   └── backends/                  — one header per backend

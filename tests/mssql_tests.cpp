@@ -231,3 +231,10 @@ TEST(MSSQL, VerifyModeRefusesAnUntrustedCertificate) {
     ASSERT_TRUE(conn);
     EXPECT_FALSE(conn->open().first);
 }
+
+TEST(MSSQL, DeleteImpactCountsMatch) {
+    OPEN_OR_SKIP(conn, st);
+    auto schema = dboSchema(conn, c->database);
+    ASSERT_TRUE(schema);
+    checkDeleteImpact(*schema, DatabaseType::MSSQL, "dearsql_lib_ms_impact");
+}

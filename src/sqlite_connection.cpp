@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <format>
+#include <map>
 #include <memory>
 #include <sqlite3.h>
 
@@ -203,6 +204,9 @@ Table SQLiteDatabaseNode::load(const std::string& tn, bool isView) {
     if (isView)
         return t;
 
+    // sqlite keys have no names: one per constraint id, after its first column, so a
+    // composite key stays one key
+    std::map<int, std::string> fkNames;
     queryRows(db, "PRAGMA foreign_key_list(" + q + ")", [&](sqlite3_stmt* stmt) {
         ForeignKey fk;
         fk.targetTable = columnText(stmt, 2);
@@ -210,7 +214,10 @@ Table SQLiteDatabaseNode::load(const std::string& tn, bool isView) {
         fk.targetColumn = columnText(stmt, 4);
         fk.onUpdate = columnText(stmt, 5);
         fk.onDelete = columnText(stmt, 6);
-        fk.name = std::format("fk_{}_{}", tn, fk.sourceColumn);
+        auto [it, added] = fkNames.try_emplace(sqlite3_column_int(stmt, 0));
+        if (added)
+            it->second = std::format("fk_{}_{}", tn, fk.sourceColumn);
+        fk.name = it->second;
         t.foreignKeys.push_back(std::move(fk));
     });
 

@@ -402,3 +402,10 @@ TEST(Postgres, TableDdlRoundTrips) {
     EXPECT_THROW(schema->tableDdl("dearsql_ddl_missing"), Error);
     db->execute(drop, 0);
 }
+
+TEST(Postgres, DeleteImpactCountsMatch) {
+    OPEN_OR_SKIP(conn, st);
+    auto schema = publicSchema(conn);
+    ASSERT_TRUE(schema);
+    checkDeleteImpact(*schema, DatabaseType::POSTGRESQL, "dearsql_lib_pg_impact");
+}

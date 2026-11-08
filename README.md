@@ -145,6 +145,20 @@ if (auto plan = dearsql::parsePlan(type, result.statements.front(), false)) {
 
 Pure, like completion: the host runs the statement. PostgreSQL uses `EXPLAIN (FORMAT JSON)` (`ANALYZE, BUFFERS` with analyze), MySQL 8.0.16+ `EXPLAIN FORMAT=TREE` / `EXPLAIN ANALYZE` (8.0.18+), SQLite `EXPLAIN QUERY PLAN` (tree only, no numbers). Every other type, CockroachDB, Redshift, MariaDB and TiDB included, gets nullopt. Times are wall time: Postgres per-loop time × loops, except below a Gather where workers run concurrently; `selfTimeMs` is a node's time minus its children's. ANALYZE executes the statement, so deciding when that is safe is the host's job. Tests: `tests/explain_tests.cpp` (fixtures, no database).
 
+## Delete impact
+
+```cpp
+#include <dearsql/delete_impact.hpp>
+
+// rootWhere picks the rows about to be deleted, unqualified column names
+for (const auto& e : dearsql::deleteEffects(type, db->tables(), table, "\"id\" = 1")) {
+    // e.table, e.columns, e.action (CASCADE / SET NULL / SET DEFAULT / RESTRICT / NO ACTION),
+    // e.path ("customers > orders > items"), e.depth; run e.countSql for the row count
+}
+```
+
+What deleting rows does to the rows that reference them, one effect per foreign key into the table, following `ON DELETE CASCADE` keys down (`maxDepth`, 3) since those rows go too. Pure: it builds a `COUNT(*)` per effect out of nested `EXISTS` (aliases without `AS`, which Oracle rejects; composite keys join on every column) and the host runs them. Keys are looked up in the `tables` passed in, so a key from another schema is not seen. Two cascade paths into one table count its rows once per path: read a deeper count as "up to". A RESTRICT or NO ACTION effect with rows means the delete fails; a key without a rule counts as NO ACTION. `ForeignKey::onDelete` is filled on PostgreSQL, MySQL, MariaDB, TiDB, SQL Server, Oracle and SQLite (DuckDB has no actions; Redshift does not enforce keys). SQLite only applies the rules with `PRAGMA foreign_keys` on, which the library does not set: the host checks it. Tests: `tests/delete_impact_tests.cpp` (SQLite, against the real delete) and `DeleteImpactCountsMatch` in each server suite.
+
 ## Layout
 
 ```

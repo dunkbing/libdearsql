@@ -585,7 +585,10 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
     // 10s+ on ~800 tables (#53). redshift may lack this form, so it falls back
     std::unordered_map<std::string, std::vector<ForeignKey>> fks;
     auto fkResult =
-        run(std::format("SELECT src.relname, sa.attname, tgt.relname, ta.attname, con.conname "
+        run(std::format("SELECT src.relname, sa.attname, tgt.relname, ta.attname, con.conname, "
+                        "CASE con.confdeltype WHEN 'c' THEN 'CASCADE' "
+                        "WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' "
+                        "WHEN 'r' THEN 'RESTRICT' ELSE 'NO ACTION' END "
                         "FROM pg_catalog.pg_constraint con "
                         "JOIN pg_catalog.pg_class src ON src.oid = con.conrelid "
                         "JOIN pg_catalog.pg_namespace n ON n.oid = src.relnamespace "
@@ -605,7 +608,7 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
             ? std::move(fkResult[0].tableData)
             : rows(std::format(
                   "SELECT tc.table_name, kcu.column_name, ccu.table_name, ccu.column_name, "
-                  "tc.constraint_name "
+                  "tc.constraint_name, rc.delete_rule "
                   "FROM information_schema.table_constraints tc "
                   "JOIN information_schema.key_column_usage kcu "
                   "  ON tc.constraint_name = kcu.constraint_name "
@@ -613,6 +616,9 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
                   "JOIN information_schema.constraint_column_usage ccu "
                   "  ON ccu.constraint_name = tc.constraint_name "
                   "  AND ccu.table_schema = tc.table_schema "
+                  "LEFT JOIN information_schema.referential_constraints rc "
+                  "  ON rc.constraint_name = tc.constraint_name "
+                  "  AND rc.constraint_schema = tc.table_schema "
                   "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = {} "
                   "AND tc.table_name IN ({}) ORDER BY tc.table_name",
                   literal(schema), nameList));
@@ -624,6 +630,8 @@ std::vector<Table> PostgresDatabase::tablesIn(const std::string& schema) {
         fk.targetTable = row[2];
         fk.targetColumn = row[3];
         fk.name = row[4];
+        if (row.size() > 5)
+            fk.onDelete = row[5];
         fks[row[0]].push_back(std::move(fk));
     }
 
@@ -857,7 +865,8 @@ Table PostgresDatabase::describeIn(const std::string& schema, const std::string&
     }
 
     for (const auto& row : rows(std::format(
-             "SELECT kcu.column_name, ccu.table_name, ccu.column_name, tc.constraint_name "
+             "SELECT kcu.column_name, ccu.table_name, ccu.column_name, tc.constraint_name, "
+             "rc.delete_rule "
              "FROM information_schema.table_constraints tc "
              "JOIN information_schema.key_column_usage kcu "
              "  ON tc.constraint_name = kcu.constraint_name "
@@ -865,6 +874,9 @@ Table PostgresDatabase::describeIn(const std::string& schema, const std::string&
              "JOIN information_schema.constraint_column_usage ccu "
              "  ON ccu.constraint_name = tc.constraint_name "
              "  AND ccu.table_schema = tc.table_schema "
+             "LEFT JOIN information_schema.referential_constraints rc "
+             "  ON rc.constraint_name = tc.constraint_name "
+             "  AND rc.constraint_schema = tc.table_schema "
              "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = {} "
              "AND tc.table_name = {}",
              schemaLit, tableLit))) {
@@ -875,6 +887,8 @@ Table PostgresDatabase::describeIn(const std::string& schema, const std::string&
         fk.targetTable = row[1];
         fk.targetColumn = row[2];
         fk.name = row[3];
+        if (row.size() > 4)
+            fk.onDelete = row[4];
         t.foreignKeys.push_back(std::move(fk));
     }
 

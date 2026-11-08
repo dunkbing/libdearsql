@@ -16,6 +16,13 @@
 #include <unordered_map>
 #include <vector>
 
+// a KEY_COLUMN_USAGE row's ON DELETE rule (CASCADE, SET NULL, RESTRICT, NO ACTION...)
+#define MYSQL_FK_DELETE_RULE                                                                       \
+    "(SELECT rc.DELETE_RULE FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc "                   \
+    "WHERE rc.CONSTRAINT_SCHEMA = KEY_COLUMN_USAGE.TABLE_SCHEMA "                                  \
+    "AND rc.TABLE_NAME = KEY_COLUMN_USAGE.TABLE_NAME "                                             \
+    "AND rc.CONSTRAINT_NAME = KEY_COLUMN_USAGE.CONSTRAINT_NAME)"
+
 namespace dearsql {
 
 namespace {
@@ -376,7 +383,7 @@ std::vector<Table> MySQLDatabase::tables() {
 
         const std::string fkQuery = std::format(
             "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME, "
-            "CONSTRAINT_NAME "
+            "CONSTRAINT_NAME, " MYSQL_FK_DELETE_RULE " "
             "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
             "WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}' "
             "AND REFERENCED_TABLE_NAME IS NOT NULL",
@@ -391,6 +398,8 @@ std::vector<Table> MySQLDatabase::tables() {
                     fk.targetTable = row[1] ? row[1] : "";
                     fk.targetColumn = row[2] ? row[2] : "";
                     fk.name = row[3] ? row[3] : "";
+                fk.onDelete = row[4] ? row[4] : "";
+                    fk.onDelete = row[4] ? row[4] : "";
                     table.foreignKeys.push_back(std::move(fk));
                 }
             }
@@ -588,7 +597,8 @@ Table MySQLDatabase::describeTable(const std::string& tableName) {
     drainExtraResults(conn_);
 
     const std::string fkQuery = std::format(
-        "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME, CONSTRAINT_NAME "
+        "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME, CONSTRAINT_NAME, "
+        MYSQL_FK_DELETE_RULE " "
         "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
         "WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}' AND REFERENCED_TABLE_NAME IS NOT NULL",
         escapeLiteral(name_), escapeLiteral(tableName));

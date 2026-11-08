@@ -234,3 +234,8 @@ TEST(MySQL, TableDdlRoundTrips) {
     EXPECT_TRUE(r.success()) << r.errorMessage();
     db->execute("DROP TABLE IF EXISTS dearsql_ddl_t", 0);
 }
+
+TEST(MySQL, DeleteImpactCountsMatch) {
+    OPEN_OR_SKIP(conn, st);
+    checkDeleteImpact(*conn->database(), DatabaseType::MYSQL, "dearsql_lib_my_impact");
+}
