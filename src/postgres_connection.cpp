@@ -12,6 +12,8 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <map>
+#include <sstream>
 #include <utility>
 
 #ifdef _WIN32
@@ -841,8 +843,9 @@ Table PostgresDatabase::describeIn(const std::string& schema, const std::string&
     for (auto& c : t.columns)
         c.isPrimaryKey = std::ranges::find(pkCols, c.name) != pkCols.end();
 
+    std::map<std::string, std::vector<std::pair<int, std::string>>> keyPos;
     for (const auto& row : rows(std::format(
-             "SELECT i.relname, a.attname, ix.indisunique "
+             "SELECT i.relname, a.attname, ix.indisunique, a.attnum, ix.indkey::text "
              "FROM pg_class t "
              "JOIN pg_namespace n ON n.oid = t.relnamespace "
              "JOIN pg_index ix ON t.oid = ix.indrelid "
@@ -861,7 +864,24 @@ Table PostgresDatabase::describeIn(const std::string& schema, const std::string&
             t.indexes.push_back(std::move(idx));
             it = std::prev(t.indexes.end());
         }
-        it->columns.push_back(row[1]);
+        // indkey ("3 1") is the key order; attnum order is the table's
+        int pos = 0;
+        if (row.size() >= 5) {
+            std::istringstream keys(row[4]);
+            for (std::string k; keys >> k && k != row[3];)
+                ++pos;
+        }
+        keyPos[row[0]].emplace_back(pos, row[1]);
+    }
+    for (auto& idx : t.indexes) {
+        auto found = keyPos.find(idx.name);
+        if (found == keyPos.end())
+            continue;
+        auto& cols = found->second;
+        std::ranges::stable_sort(cols);
+        idx.columns.clear();
+        for (auto& [p, name] : cols)
+            idx.columns.push_back(std::move(name));
     }
 
     for (const auto& row : rows(std::format(

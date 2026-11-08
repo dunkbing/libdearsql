@@ -117,6 +117,13 @@ TEST(Postgres, DescribeTable) {
     EXPECT_TRUE(t.columns[1].isNotNull);
     EXPECT_FALSE(t.foreignKeys.empty());
 
+    // index columns in key order, not the table's column order
+    conn->database()->execute("CREATE INDEX " + tbl + "_np ON " + tbl + " (parent_id, name)");
+    t = schema->describeTable(tbl);
+    const auto idx = std::ranges::find(t.indexes, tbl + "_np", &Index::name);
+    ASSERT_NE(idx, t.indexes.end());
+    EXPECT_EQ(idx->columns, (std::vector<std::string>{"parent_id", "name"}));
+
     conn->database()->execute("DROP TABLE " + tbl);
 }
 
