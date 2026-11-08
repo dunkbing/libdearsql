@@ -24,6 +24,7 @@
 #include "types.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -122,6 +123,15 @@ namespace dearsql {
     // comment-only stretches between semicolons are skipped
     [[nodiscard]] std::vector<std::pair<size_t, size_t>> statementRanges(std::string_view sql,
                                                                          DatabaseType type);
+
+    // :name placeholders, each once, in order of first use; never inside strings or comments,
+    // and not ::casts or :=
+    [[nodiscard]] std::vector<std::string> queryParameters(std::string_view sql, DatabaseType type);
+
+    // the text with every :name that has a value replaced by it as a literal: numbers and NULL
+    // as typed, anything else a quoted string (' doubled; \\ too on mysql, mariadb, tidb)
+    [[nodiscard]] std::string bindParameters(std::string_view sql, DatabaseType type,
+                                             const std::map<std::string, std::string>& values);
 
     // uppercase, sorted, per dialect; empty for redis and mongodb, cql for cassandra
     [[nodiscard]] const std::vector<std::string>& sqlKeywords(DatabaseType type);

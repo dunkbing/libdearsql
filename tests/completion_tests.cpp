@@ -502,3 +502,24 @@ TEST(Completion, StatementRangesSkipCommentsAndQuotedSemicolons) {
     EXPECT_EQ(text(1), "UPDATE t SET a = 1");
     EXPECT_EQ(text(2), "DO $$ BEGIN PERFORM 1; END $$");
 }
+
+// :name placeholders: not in strings or comments, not ::casts or :=; each name once
+TEST(Completion, QueryParameters) {
+    using dearsql::DatabaseType;
+    const std::string sql = "select a::int, ':no', \"x:y\" -- :nope\n"
+                            "from t where id = :id and day = :day and :id > 0 /* :c */";
+    EXPECT_EQ(dearsql::queryParameters(sql, DatabaseType::POSTGRESQL),
+              (std::vector<std::string>{"id", "day"}));
+    EXPECT_TRUE(dearsql::queryParameters("set @x := 1", DatabaseType::MYSQL).empty());
+
+    const std::map<std::string, std::string> values{
+        {"id", "42"}, {"day", "it's 2024-01-01"}, {"n", "null"}};
+    EXPECT_EQ(dearsql::bindParameters("where id = :id and day = :day and x is :n and y = :none",
+                                      DatabaseType::POSTGRESQL, values),
+              "where id = 42 and day = 'it''s 2024-01-01' and x is NULL and y = :none");
+    // mysql strings take backslash escapes: a trailing \ must not swallow the quote
+    EXPECT_EQ(dearsql::bindParameters("select :p", DatabaseType::MYSQL, {{"p", "a\\' or 1=1 -- "}}),
+              "select 'a\\\\'' or 1=1 -- '");
+    EXPECT_EQ(dearsql::bindParameters("select :p", DatabaseType::POSTGRESQL, {{"p", "a\\"}}),
+              "select 'a\\'");
+}

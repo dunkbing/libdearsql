@@ -6,6 +6,7 @@
 #include <cctype>
 #include <initializer_list>
 #include <memory>
+#include <regex>
 #include <unordered_set>
 
 namespace dearsql {
@@ -2069,6 +2070,70 @@ namespace dearsql {
             }
         }
         flush();
+        return out;
+    }
+
+    namespace {
+        // a :name token: the tokenizer also calls @var, ? and $1 parameters
+        bool isColonParam(const Token& t, std::string_view sql) {
+            return t.kind == Tok::Param && t.end > t.begin + 1 && sql[t.begin] == ':';
+        }
+
+        std::string paramLiteral(const std::string& value, DatabaseType type) {
+            static const std::regex number(R"(-?\d+(\.\d+)?([eE][-+]?\d+)?)");
+            if (std::regex_match(value, number)) {
+                return value;
+            }
+            std::string upper = value;
+            std::ranges::transform(upper, upper.begin(),
+                                   [](unsigned char c) { return std::toupper(c); });
+            if (upper == "NULL") {
+                return "NULL";
+            }
+            const bool backslash = type == DatabaseType::MYSQL || type == DatabaseType::MARIADB ||
+                                   type == DatabaseType::TIDB;
+            std::string out = "'";
+            for (const char c : value) {
+                if (c == '\'' || (backslash && c == '\\')) {
+                    out += c;
+                }
+                out += c;
+            }
+            return out + "'";
+        }
+    } // namespace
+
+    std::vector<std::string> queryParameters(std::string_view sql, DatabaseType type) {
+        std::vector<std::string> out;
+        for (const auto& t : tokenize(sql, dialectFor(type))) {
+            if (!isColonParam(t, sql)) {
+                continue;
+            }
+            std::string name(sql.substr(t.begin + 1, t.end - t.begin - 1));
+            if (std::ranges::find(out, name) == out.end()) {
+                out.push_back(std::move(name));
+            }
+        }
+        return out;
+    }
+
+    std::string bindParameters(std::string_view sql, DatabaseType type,
+                               const std::map<std::string, std::string>& values) {
+        std::string out;
+        size_t copied = 0;
+        for (const auto& t : tokenize(sql, dialectFor(type))) {
+            if (!isColonParam(t, sql)) {
+                continue;
+            }
+            const auto it = values.find(std::string(sql.substr(t.begin + 1, t.end - t.begin - 1)));
+            if (it == values.end()) {
+                continue;
+            }
+            out.append(sql.substr(copied, t.begin - copied));
+            out += paramLiteral(it->second, type);
+            copied = t.end;
+        }
+        out.append(sql.substr(copied));
         return out;
     }
 
