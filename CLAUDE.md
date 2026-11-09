@@ -128,7 +128,7 @@ libdearsql/
 ## Backend Status
 
 Every backend but SQLite is optional (`dearsql_backend()` in `CMakeLists.txt`: built when its
-driver is found, or with `DEARSQL_WITH_VENDORED_DRIVERS` for MSSQL/Oracle/Cassandra, off on iOS;
+driver is found, or with `DEARSQL_WITH_FREETDS` for MSSQL (on everywhere, iOS too) and `DEARSQL_WITH_VENDORED_DRIVERS` for Oracle/Cassandra (off on iOS);
 each defines `DEARSQL_HAS_<NAME>`, and `factory.cpp` returns null for the rest). A new backend goes
 through the same helper. MongoDB is on the C driver (libmongoc/libbson); its documents print as legacy extended
 JSON, which the app and its tests match exactly. All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built

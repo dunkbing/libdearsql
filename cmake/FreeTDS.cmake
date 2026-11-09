@@ -156,14 +156,23 @@ elseif(APPLE)
         "${_VCPKG_OPENSSL_LIB_DIR}"
         DIRECTORY
     )
+  set(_FREETDS_PLATFORM_ARGS -DCMAKE_OSX_ARCHITECTURES=arm64
+        -DCMAKE_C_FLAGS=-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
+  if(IOS)
+    # cross-compiled: no kerberos framework; the ios find root hides vcpkg's openssl
+    set(_FREETDS_PLATFORM_ARGS -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+        -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
+        -DENABLE_KRB5=OFF -DCMAKE_MACOSX_BUNDLE=OFF
+        -DOPENSSL_INCLUDE_DIR=${OPENSSL_INCLUDE_DIR} -DOPENSSL_SSL_LIBRARY=${_OPENSSL_SSL_LOC}
+        -DOPENSSL_CRYPTO_LIBRARY=${_VCPKG_OPENSSL_LIB_DIR}/libcrypto.a)
+  endif()
   ExternalProject_Add(
         freetds_external
         SOURCE_DIR "${FREETDS_SOURCE_DIR}"
         CMAKE_ARGS
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}
-            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release
+            ${_FREETDS_PLATFORM_ARGS} -DCMAKE_BUILD_TYPE=Release
             -DCMAKE_INSTALL_PREFIX=${FREETDS_INSTALL_DIR}
-            -DCMAKE_C_FLAGS=-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}
             -DOPENSSL_ROOT_DIR=${_VCPKG_OPENSSL_ROOT}
             -DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew
             -DCMAKE_SYSTEM_IGNORE_PREFIX_PATH=/opt/homebrew
@@ -199,7 +208,11 @@ elseif(APPLE)
   add_dependencies(freetds_sybdb freetds_external)
   set(SYBDB_LIBRARY freetds_sybdb)
   set(SYBDB_INCLUDE_DIR "${FREETDS_INSTALL_DIR}/include")
-  find_library(KERBEROS_FRAMEWORK Kerberos)
   find_library(ICONV_LIBRARY iconv)
-  set(SYBDB_DEPS ${KERBEROS_FRAMEWORK} ${ICONV_LIBRARY})
+  if(IOS)
+    set(SYBDB_DEPS ${ICONV_LIBRARY} OpenSSL::SSL OpenSSL::Crypto)
+  else()
+    find_library(KERBEROS_FRAMEWORK Kerberos)
+    set(SYBDB_DEPS ${KERBEROS_FRAMEWORK} ${ICONV_LIBRARY})
+  endif()
 endif()
