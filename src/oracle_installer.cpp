@@ -10,6 +10,9 @@
 #include <fstream>
 #include <mutex>
 #include <system_error>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 namespace dearsql::oracle {
 
@@ -352,7 +355,10 @@ Status install(const ProgressCallback& onProgress, const std::function<bool()>& 
     std::string archiveStr = archivePath.string();
     std::string destStr = parentDir.string();
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // ios runs no unzip or hdiutil, and has no oracle driver to load the client anyway
+    (void)archiveStr, (void)destStr;
+#elif defined(__APPLE__)
     if (archiveStr.ends_with(".dmg")) {
         std::string mountPoint = destStr + "/oracle_dmg_mount";
         fs::create_directories(mountPoint, ec);
@@ -414,6 +420,16 @@ void ensureLibaio(const std::string& installDir) {
         return;
     ensureLibaioImpl(fs::path(installDir));
 }
+#endif
+
+#ifndef DEARSQL_HAS_ORACLE
+// the context calls live with the driver (oracle_connection.cpp); without it there is
+// nothing to load the client into
+void setClientOptions(const ClientOptions&) {}
+bool needsClientInstall() {
+    return false;
+}
+void resetContext() {}
 #endif
 
 } // namespace dearsql::oracle

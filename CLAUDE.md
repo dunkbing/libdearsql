@@ -84,7 +84,7 @@ Common types live in `dearsql::` namespace:
 ```
 libdearsql/
 ├── CMakeLists.txt                 — single static target `dearsql` (alias `dearsql::dearsql`)
-├── vcpkg.json                     — manifest, all backend deps unconditionally
+├── vcpkg.json                     — manifest, all backend deps (a host may install fewer)
 ├── README.md                      — user-facing
 ├── CLAUDE.md                      — this file
 ├── cmake/
@@ -127,7 +127,10 @@ libdearsql/
 
 ## Backend Status
 
-All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built
+Every backend but SQLite is optional (`dearsql_backend()` in `CMakeLists.txt`: built when its
+driver is found, or with `DEARSQL_WITH_VENDORED_DRIVERS` for MSSQL/Oracle/Cassandra, off on iOS;
+each defines `DEARSQL_HAS_<NAME>`, and `factory.cpp` returns null for the rest). A new backend goes
+through the same helper. All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built
 when CMake finds DuckDB; `.csv` paths open as a read-only view over the file, and
 `csvMatchingRows()` filters a CSV with a SQL condition for hosts that edit it). Every server
 backend has `openDatabase()`, `cancel()` and `alive()` (cancel is a no-op on MongoDB,

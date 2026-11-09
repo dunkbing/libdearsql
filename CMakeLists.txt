@@ -64,25 +64,38 @@ if(_DEARSQL_TOP_LEVEL)
 endif()
 
 # ---------- Find dependencies ----------
+# sqlite, openssl, httplib and json are required; every server driver is optional:
+# a backend whose client library is missing is left out (DEARSQL_HAS_<X> unset) and
+# makeConnection() returns null for it. iOS has none of the vendored ones.
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
-find_package(PostgreSQL REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(unofficial-libmariadb CONFIG REQUIRED)
-find_package(hiredis CONFIG REQUIRED)
-find_package(hiredis_ssl CONFIG QUIET)
-find_package(mongocxx CONFIG REQUIRED)
-find_package(bsoncxx CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 if(NOT TARGET nlohmann_json::nlohmann_json)
     find_package(nlohmann_json CONFIG REQUIRED)
 endif()
+find_package(PostgreSQL QUIET)
+find_package(unofficial-libmariadb CONFIG QUIET)
+find_package(hiredis CONFIG QUIET)
+find_package(hiredis_ssl CONFIG QUIET)
+find_package(mongocxx CONFIG QUIET)
+find_package(bsoncxx CONFIG QUIET)
 include(cmake/PgQuery.cmake)
 find_package(DuckDB CONFIG QUIET)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(_DEARSQL_VENDORED_DEFAULT OFF)
+else()
+    set(_DEARSQL_VENDORED_DEFAULT ON)
+endif()
+option(DEARSQL_WITH_VENDORED_DRIVERS "Build FreeTDS, ODPI-C and the Cassandra driver"
+       ${_DEARSQL_VENDORED_DEFAULT})
+
 # vendored drivers: freetds_sybdb (or system libsybdb on linux), odpi, cassandra_static
-include(cmake/FreeTDS.cmake)
-include(cmake/OracleOCI.cmake)
-include(cmake/CassandraDriver.cmake)
+if(DEARSQL_WITH_VENDORED_DRIVERS)
+    include(cmake/FreeTDS.cmake)
+    include(cmake/OracleOCI.cmake)
+    include(cmake/CassandraDriver.cmake)
+endif()
 
 # ---------- Library ----------
 add_library(libdearsql STATIC
@@ -99,14 +112,8 @@ add_library(libdearsql STATIC
     src/sql_builder.cpp
     src/factory.cpp
     src/sqlite_connection.cpp
-    src/postgres_connection.cpp
-    src/mysql_connection.cpp
-    src/mongodb_connection.cpp
-    src/redis_connection.cpp
-    src/mssql_connection.cpp
-    src/oracle_connection.cpp
+    # no driver needed: a host can offer the oracle client download on its own
     src/oracle_installer.cpp
-    src/cassandra_connection.cpp
 )
 add_library(dearsql::dearsql ALIAS libdearsql)
 # target named libdearsql so a host can keep an executable called dearsql
@@ -123,17 +130,10 @@ target_include_directories(libdearsql
 target_compile_features(libdearsql PUBLIC cxx_std_20)
 
 # driver targets are PUBLIC so a host that still talks to the native client
-# libraries directly (DearSQL during its migration) gets headers + link for free
+# libraries directly (DearSQL's dump tools) gets headers + link for free
 target_link_libraries(libdearsql
     PUBLIC
         unofficial::sqlite3::sqlite3
-        PostgreSQL::PostgreSQL
-        unofficial::libmariadb
-        hiredis::hiredis
-        $<IF:$<TARGET_EXISTS:mongo::mongocxx_static>,mongo::mongocxx_static,mongo::mongocxx_shared>
-        $<IF:$<TARGET_EXISTS:mongo::bsoncxx_static>,mongo::bsoncxx_static,mongo::bsoncxx_shared>
-        odpi
-        cassandra_static
         OpenSSL::SSL
         OpenSSL::Crypto
     PRIVATE
@@ -142,14 +142,41 @@ target_link_libraries(libdearsql
         pg_query
 )
 
+# one backend: its source, its driver, and DEARSQL_HAS_<name> for hosts and the factory
+function(dearsql_backend name)
+    cmake_parse_arguments(B "" "" "SOURCES;LIBS" ${ARGN})
+    target_sources(libdearsql PRIVATE ${B_SOURCES})
+    target_link_libraries(libdearsql PUBLIC ${B_LIBS})
+    target_compile_definitions(libdearsql PUBLIC DEARSQL_HAS_${name})
+endfunction()
+
+if(PostgreSQL_FOUND)
+    dearsql_backend(POSTGRES SOURCES src/postgres_connection.cpp LIBS PostgreSQL::PostgreSQL)
+endif()
+if(TARGET unofficial::libmariadb)
+    dearsql_backend(MYSQL SOURCES src/mysql_connection.cpp LIBS unofficial::libmariadb)
+endif()
+if(TARGET hiredis::hiredis)
+    dearsql_backend(REDIS SOURCES src/redis_connection.cpp LIBS hiredis::hiredis)
+    if(TARGET hiredis::hiredis_ssl)
+        target_link_libraries(libdearsql PUBLIC hiredis::hiredis_ssl)
+    endif()
+endif()
+if(mongocxx_FOUND AND bsoncxx_FOUND)
+    dearsql_backend(MONGODB SOURCES src/mongodb_connection.cpp LIBS
+        $<IF:$<TARGET_EXISTS:mongo::mongocxx_static>,mongo::mongocxx_static,mongo::mongocxx_shared>
+        $<IF:$<TARGET_EXISTS:mongo::bsoncxx_static>,mongo::bsoncxx_static,mongo::bsoncxx_shared>)
+endif()
+if(DEARSQL_WITH_VENDORED_DRIVERS)
+    dearsql_backend(MSSQL SOURCES src/mssql_connection.cpp)
+    dearsql_backend(ORACLE SOURCES src/oracle_connection.cpp LIBS odpi)
+    dearsql_backend(CASSANDRA SOURCES src/cassandra_connection.cpp LIBS cassandra_static)
+endif()
+
 if(DuckDB_FOUND)
     target_sources(libdearsql PRIVATE src/duckdb_connection.cpp)
     target_link_libraries(libdearsql PUBLIC $<IF:$<TARGET_EXISTS:duckdb>,duckdb,duckdb_static>)
     target_compile_definitions(libdearsql PUBLIC DEARSQL_HAS_DUCKDB)
-endif()
-
-if(TARGET hiredis::hiredis_ssl)
-    target_link_libraries(libdearsql PUBLIC hiredis::hiredis_ssl)
 endif()
 
 # SYSTEM + AFTER so FreeTDS headers never shadow vcpkg MySQL/OpenSSL ones
