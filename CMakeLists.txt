@@ -77,8 +77,7 @@ find_package(PostgreSQL QUIET)
 find_package(unofficial-libmariadb CONFIG QUIET)
 find_package(hiredis CONFIG QUIET)
 find_package(hiredis_ssl CONFIG QUIET)
-find_package(mongocxx CONFIG QUIET)
-find_package(bsoncxx CONFIG QUIET)
+find_package(mongoc CONFIG QUIET) # mongo-c-driver, pulls in bson
 include(cmake/PgQuery.cmake)
 find_package(DuckDB CONFIG QUIET)
 
@@ -162,10 +161,8 @@ if(TARGET hiredis::hiredis)
         target_link_libraries(libdearsql PUBLIC hiredis::hiredis_ssl)
     endif()
 endif()
-if(mongocxx_FOUND AND bsoncxx_FOUND)
-    dearsql_backend(MONGODB SOURCES src/mongodb_connection.cpp LIBS
-        $<IF:$<TARGET_EXISTS:mongo::mongocxx_static>,mongo::mongocxx_static,mongo::mongocxx_shared>
-        $<IF:$<TARGET_EXISTS:mongo::bsoncxx_static>,mongo::bsoncxx_static,mongo::bsoncxx_shared>)
+if(mongoc_FOUND)
+    dearsql_backend(MONGODB SOURCES src/mongodb_connection.cpp LIBS mongoc::mongoc)
 endif()
 if(DEARSQL_WITH_VENDORED_DRIVERS)
     dearsql_backend(MSSQL SOURCES src/mssql_connection.cpp)

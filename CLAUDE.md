@@ -130,7 +130,8 @@ libdearsql/
 Every backend but SQLite is optional (`dearsql_backend()` in `CMakeLists.txt`: built when its
 driver is found, or with `DEARSQL_WITH_VENDORED_DRIVERS` for MSSQL/Oracle/Cassandra, off on iOS;
 each defines `DEARSQL_HAS_<NAME>`, and `factory.cpp` returns null for the rest). A new backend goes
-through the same helper. All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built
+through the same helper. MongoDB is on the C driver (libmongoc/libbson); its documents print as legacy extended
+JSON, which the app and its tests match exactly. All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built
 when CMake finds DuckDB; `.csv` paths open as a read-only view over the file, and
 `csvMatchingRows()` filters a CSV with a SQL condition for hosts that edit it). Every server
 backend has `openDatabase()`, `cancel()` and `alive()` (cancel is a no-op on MongoDB,
@@ -154,7 +155,7 @@ Per-backend test counts (run `./build/tests/dearsql_lib_tests --gtest_list_tests
 | MySQL         | 14    | + AUTO_INCREMENT detect, routines, SHOW CREATE TABLE   |
 | MSSQL         | 11    | + dbo schema, OFFSET/FETCH paging, builder DDL         |
 | Oracle        | 9     | + sequences, FREEPDB1 PDB, DBMS_METADATA DDL           |
-| MongoDB       | 7     | + collections-as-tables, JSON command execute          |
+| MongoDB       | 7     | + collections-as-tables, JSON command execute (C driver) |
 | Redis         | 8     | + key types, TTL, SCAN, SELECT db                      |
 | Cassandra     | 8     | + keyspace as database, CQL; ScyllaDB runs on this backend |
 | Redshift      | 3     | reuses Postgres backend                                |

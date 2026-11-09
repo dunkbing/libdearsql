@@ -20,7 +20,7 @@
       "name": "hiredis",
       "features": ["ssl"]
     },
-    "mongo-cxx-driver",
+    "mongo-c-driver",
     "libuv",
     "zlib",
     "libiconv",
