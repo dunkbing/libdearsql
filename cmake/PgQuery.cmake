@@ -26,3 +26,7 @@ else()
     target_compile_options(pg_query PRIVATE -w -fno-strict-aliasing -fwrapv
                                             -include ${CMAKE_CURRENT_LIST_DIR}/pg_query_prefix.h)
 endif()
+# bionic declares preadv/pwritev only for gnu sources
+if(ANDROID)
+    target_compile_definitions(pg_query PRIVATE _GNU_SOURCE)
+endif()
