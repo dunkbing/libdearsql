@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <dearsql/explain.hpp>
 #include <dearsql/findings.hpp>
 #include <gtest/gtest.h>

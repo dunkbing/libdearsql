@@ -29,12 +29,9 @@ if(LINUX)
   include(ExternalProject)
   set(FREETDS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/freetds")
   set(FREETDS_BINARY_DIR "${CMAKE_BINARY_DIR}/freetds-build")
-  get_target_property(_OPENSSL_SSL_LOC OpenSSL::SSL IMPORTED_LOCATION)
-  if(NOT _OPENSSL_SSL_LOC)
-    get_target_property(_OPENSSL_SSL_LOC OpenSSL::SSL IMPORTED_LOCATION_RELEASE)
-  endif()
-  get_filename_component(_VCPKG_OPENSSL_LIB_DIR "${_OPENSSL_SSL_LOC}" DIRECTORY)
-  get_filename_component(_VCPKG_OPENSSL_ROOT "${_VCPKG_OPENSSL_LIB_DIR}" DIRECTORY)
+  # the root from the headers: a debug build's libssl sits in debug/lib, which has no
+  # include/, and freetds then quietly builds without tls
+  get_filename_component(_VCPKG_OPENSSL_ROOT "${OPENSSL_INCLUDE_DIR}" DIRECTORY)
   set(_FREETDS_LIBS
         "${FREETDS_BINARY_DIR}/src/dblib/libdb-lib.a"
         "${FREETDS_BINARY_DIR}/src/tds/libtds.a"
