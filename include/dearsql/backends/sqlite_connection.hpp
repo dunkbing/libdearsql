@@ -38,6 +38,7 @@ private:
     ConnectionInfo info_;
     std::shared_ptr<void> handle_;
     DatabasePtr defaultDb_;
+    std::string memoryUri_; // a workbook's shared in-memory database; empty for files
 };
 
 } // namespace dearsql

@@ -168,6 +168,12 @@ bool isCsvPath(const std::string& path) {
     return ext == ".csv";
 }
 
+bool isXlsxPath(const std::string& path) {
+    std::string ext = std::filesystem::path(path).extension().string();
+    std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return std::tolower(c); });
+    return ext == ".xlsx" || ext == ".xlsm";
+}
+
 std::string ConnectionInfo::buildConnectionString(const std::string& dbName) const {
     switch (type) {
     case DatabaseType::SQLITE:

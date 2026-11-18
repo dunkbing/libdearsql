@@ -1,4 +1,8 @@
 #include "dearsql/backends/sqlite_connection.hpp"
+#include <atomic>
+#ifdef DEARSQL_HAS_XLSX
+#include "xlsx_workbook.hpp"
+#endif
 
 #include <chrono>
 #include <format>
@@ -27,12 +31,16 @@ struct Handle {
     }
 };
 
-Status openHandle(const ConnectionInfo& info, sqlite3** out) {
-    const int flags = (info.readOnly ? SQLITE_OPEN_READONLY
-                                     : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) |
+// memoryUri: a workbook's shared in-memory database instead of the file at info.path
+Status openHandle(const ConnectionInfo& info, sqlite3** out, const std::string& memoryUri = "") {
+    const bool memory = !memoryUri.empty();
+    const int flags = (memory           ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI
+                       : info.readOnly ? SQLITE_OPEN_READONLY
+                                       : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) |
                       SQLITE_OPEN_FULLMUTEX;
     sqlite3* db = nullptr;
-    if (sqlite3_open_v2(info.path.c_str(), &db, flags, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(memory ? memoryUri.c_str() : info.path.c_str(), &db, flags, nullptr) !=
+        SQLITE_OK) {
         std::string err = db ? sqlite3_errmsg(db) : "Unable to open database";
         sqlite3_close(db);
         return {false, err};
@@ -305,9 +313,30 @@ Status SQLiteConnection::open() {
     if (handle_)
         return {true, ""};
     sqlite3* db = nullptr;
-    auto status = openHandle(info_, &db);
+    std::string memoryUri;
+    if (isXlsxPath(info_.path)) {
+#ifdef DEARSQL_HAS_XLSX
+        // a workbook: sheets loaded once into memory that every handle of this connection
+        // shares, then read-only, like a csv view
+        static std::atomic<int> next{0};
+        memoryUri = std::format("file:dearsql_xlsx_{}?mode=memory&cache=shared", ++next);
+#else
+        return {false, "This build cannot open Excel workbooks"};
+#endif
+    }
+    auto status = openHandle(info_, &db, memoryUri);
     if (!status.first)
         return status;
+#ifdef DEARSQL_HAS_XLSX
+    if (!memoryUri.empty()) {
+        if (auto loaded = xlsx::loadWorkbook(db, info_.path); !loaded.first) {
+            sqlite3_close(db);
+            return loaded;
+        }
+        sqlite3_exec(db, "PRAGMA query_only = ON", nullptr, nullptr, nullptr);
+    }
+#endif
+    memoryUri_ = memoryUri;
     auto h = std::make_shared<Handle>();
     h->db = db;
     handle_ = std::move(h);
@@ -346,8 +375,13 @@ DatabasePtr SQLiteConnection::database(const std::string& /*name*/) {
 
 DatabasePtr SQLiteConnection::openDatabase(const std::string& /*name*/) {
     sqlite3* db = nullptr;
-    if (!openHandle(info_, &db).first)
+    // a workbook lives only while the connection's own handle does
+    if (isXlsxPath(info_.path) && (!handle_ || memoryUri_.empty()))
         return nullptr;
+    if (!openHandle(info_, &db, memoryUri_).first)
+        return nullptr;
+    if (!memoryUri_.empty())
+        sqlite3_exec(db, "PRAGMA query_only = ON", nullptr, nullptr, nullptr);
     auto h = std::make_shared<Handle>();
     h->db = db;
     return std::make_shared<SQLiteDatabaseNode>(std::move(h), info_.name, fileNameOf(info_.path));

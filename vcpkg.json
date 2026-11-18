@@ -27,6 +27,7 @@
     "cpp-httplib",
     "nlohmann-json",
     "gtest",
-    "duckdb"
+    "duckdb",
+  "openxlsx"
   ]
 }

@@ -28,6 +28,8 @@ std::string sslModeToString(SslMode mode);
 SslMode stringToSslMode(const std::string& str);
 // .csv files open through DuckDB as an in-memory table
 bool isCsvPath(const std::string& path);
+// .xlsx workbooks open through SQLite: every sheet a table, read-only (needs DEARSQL_HAS_XLSX)
+bool isXlsxPath(const std::string& path);
 std::string databaseTypeToString(DatabaseType type);
 DatabaseType stringToDatabaseType(const std::string& typeStr);
 // wire-compatible families: one backend each, dialect quirks aside
