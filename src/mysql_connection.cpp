@@ -331,6 +331,69 @@ QueryResult MySQLDatabase::execute(const std::string& sql, int rowLimit) {
     return result;
 }
 
+namespace {
+
+// every column of a schema in one round trip, keyed by table (views included).
+// mariadb's COLUMN_DEFAULT quotes strings and spells a null default NULL; undo that so
+// it reads like SHOW COLUMNS
+std::unordered_map<std::string, std::vector<Column>>
+columnsOfSchema(MYSQL* conn, const std::string& schema, bool mariadb) {
+    std::unordered_map<std::string, std::vector<Column>> out;
+    const std::string sql = std::format(
+        "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, "
+        "EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{}' "
+        "ORDER BY TABLE_NAME, ORDINAL_POSITION",
+        escapeLiteral(schema));
+    if (mysql_query(conn, sql.c_str()) == 0) {
+        MysqlResPtr res(mysql_store_result(conn));
+        MYSQL_ROW row;
+        while (res && (row = mysql_fetch_row(res.get())) != nullptr) {
+            Column col;
+            col.name = row[1] ? row[1] : "";
+            col.type = row[2] ? row[2] : "";
+            col.isNotNull = row[3] && std::string_view(row[3]) == "NO";
+            col.isPrimaryKey = row[4] && std::string_view(row[4]) == "PRI";
+            if (row[5]) {
+                std::string def = row[5];
+                if (mariadb && def.size() >= 2 && def.front() == '\'' && def.back() == '\'') {
+                    std::string unquoted;
+                    for (size_t i = 1; i + 1 < def.size(); ++i) {
+                        unquoted += def[i];
+                        if (def[i] == '\'' && def[i + 1] == '\'')
+                            ++i;
+                    }
+                    col.defaultValue = std::move(unquoted);
+                } else if (!(mariadb && def == "NULL")) {
+                    col.defaultValue = std::move(def);
+                }
+            }
+            col.isAutoIncrement =
+                row[6] && std::string_view(row[6]).find("auto_increment") != std::string::npos;
+            out[row[0] ? row[0] : ""].push_back(std::move(col));
+        }
+    }
+    drainExtraResults(conn);
+    return out;
+}
+
+// names of one table type, as SHOW FULL TABLES lists them
+std::vector<std::string> tableNamesOfType(MYSQL* conn, const char* type) {
+    std::vector<std::string> names;
+    if (mysql_query(conn, std::format("SHOW FULL TABLES WHERE Table_type = '{}'", type).c_str()) ==
+        0) {
+        MysqlResPtr res(mysql_store_result(conn));
+        MYSQL_ROW row;
+        while (res && (row = mysql_fetch_row(res.get())) != nullptr) {
+            if (row[0])
+                names.emplace_back(row[0]);
+        }
+    }
+    drainExtraResults(conn);
+    return names;
+}
+
+} // namespace
+
 std::vector<Table> MySQLDatabase::tables() {
     std::vector<Table> result;
     try {
@@ -341,15 +404,36 @@ std::vector<Table> MySQLDatabase::tables() {
 
     std::lock_guard lock(mu_);
 
-    std::vector<std::string> tableNames;
-    if (mysql_query(conn_, "SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'") == 0) {
+    const auto tableNames = tableNamesOfType(conn_, "BASE TABLE");
+    if (tableNames.empty())
+        return result;
+    const bool mariadb = std::string_view(mysql_get_server_info(conn_)).find("MariaDB") !=
+                         std::string_view::npos;
+    auto columns = columnsOfSchema(conn_, name_, mariadb);
+
+    // every foreign key of the schema in one round trip
+    std::unordered_map<std::string, std::vector<ForeignKey>> fks;
+    const std::string fkQuery = std::format(
+        "SELECT k.TABLE_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME, "
+        "k.CONSTRAINT_NAME, rc.DELETE_RULE "
+        "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k "
+        "LEFT JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc "
+        "ON rc.CONSTRAINT_SCHEMA = k.TABLE_SCHEMA AND rc.TABLE_NAME = k.TABLE_NAME "
+        "AND rc.CONSTRAINT_NAME = k.CONSTRAINT_NAME "
+        "WHERE k.TABLE_SCHEMA = '{}' AND k.REFERENCED_TABLE_NAME IS NOT NULL "
+        "ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
+        escapeLiteral(name_));
+    if (mysql_query(conn_, fkQuery.c_str()) == 0) {
         MysqlResPtr res(mysql_store_result(conn_));
-        if (res) {
-            MYSQL_ROW row;
-            while ((row = mysql_fetch_row(res.get())) != nullptr) {
-                if (row[0])
-                    tableNames.emplace_back(row[0]);
-            }
+        MYSQL_ROW row;
+        while (res && (row = mysql_fetch_row(res.get())) != nullptr) {
+            ForeignKey fk;
+            fk.sourceColumn = row[1] ? row[1] : "";
+            fk.targetTable = row[2] ? row[2] : "";
+            fk.targetColumn = row[3] ? row[3] : "";
+            fk.name = row[4] ? row[4] : "";
+            fk.onDelete = row[5] ? row[5] : "";
+            fks[row[0] ? row[0] : ""].push_back(std::move(fk));
         }
     }
     drainExtraResults(conn_);
@@ -359,53 +443,10 @@ std::vector<Table> MySQLDatabase::tables() {
         table.name = tableName;
         table.schema = name_;
         table.fullName = info_.name + "." + name_ + "." + tableName;
-
-        const std::string columnsQuery = std::format("DESCRIBE {}", quoteIdent(tableName));
-        if (mysql_query(conn_, columnsQuery.c_str()) == 0) {
-            MysqlResPtr res(mysql_store_result(conn_));
-            if (res) {
-                MYSQL_ROW row;
-                while ((row = mysql_fetch_row(res.get())) != nullptr) {
-                    Column col;
-                    col.name = row[0] ? row[0] : "";
-                    col.type = row[1] ? row[1] : "";
-                    col.isNotNull = row[2] && std::string(row[2]) == "NO";
-                    col.isPrimaryKey = row[3] && std::string(row[3]) == "PRI";
-                    if (row[4])
-                        col.defaultValue = row[4];
-                    col.isAutoIncrement = row[5] && std::string(row[5]).find("auto_increment") !=
-                                                        std::string::npos;
-                    table.columns.push_back(std::move(col));
-                }
-            }
-        }
-        drainExtraResults(conn_);
-
-        const std::string fkQuery = std::format(
-            "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME, "
-            "CONSTRAINT_NAME, " MYSQL_FK_DELETE_RULE " "
-            "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
-            "WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}' "
-            "AND REFERENCED_TABLE_NAME IS NOT NULL",
-            escapeLiteral(name_), escapeLiteral(tableName));
-        if (mysql_query(conn_, fkQuery.c_str()) == 0) {
-            MysqlResPtr res(mysql_store_result(conn_));
-            if (res) {
-                MYSQL_ROW row;
-                while ((row = mysql_fetch_row(res.get())) != nullptr) {
-                    ForeignKey fk;
-                    fk.sourceColumn = row[0] ? row[0] : "";
-                    fk.targetTable = row[1] ? row[1] : "";
-                    fk.targetColumn = row[2] ? row[2] : "";
-                    fk.name = row[3] ? row[3] : "";
-                fk.onDelete = row[4] ? row[4] : "";
-                    fk.onDelete = row[4] ? row[4] : "";
-                    table.foreignKeys.push_back(std::move(fk));
-                }
-            }
-        }
-        drainExtraResults(conn_);
-
+        if (auto it = columns.find(tableName); it != columns.end())
+            table.columns = std::move(it->second);
+        if (auto it = fks.find(tableName); it != fks.end())
+            table.foreignKeys = std::move(it->second);
         result.push_back(std::move(table));
     }
 
@@ -423,41 +464,24 @@ std::vector<Table> MySQLDatabase::views() {
 
     std::lock_guard lock(mu_);
 
-    std::vector<std::string> viewNames;
-    if (mysql_query(conn_, "SHOW FULL TABLES WHERE Table_type = 'VIEW'") == 0) {
-        MysqlResPtr res(mysql_store_result(conn_));
-        if (res) {
-            MYSQL_ROW row;
-            while ((row = mysql_fetch_row(res.get())) != nullptr) {
-                if (row[0])
-                    viewNames.emplace_back(row[0]);
-            }
-        }
-    }
-    drainExtraResults(conn_);
+    const auto viewNames = tableNamesOfType(conn_, "VIEW");
+    if (viewNames.empty())
+        return result;
+    const bool mariadb = std::string_view(mysql_get_server_info(conn_)).find("MariaDB") !=
+                         std::string_view::npos;
+    auto columns = columnsOfSchema(conn_, name_, mariadb);
 
     for (const auto& viewName : viewNames) {
         Table view;
         view.name = viewName;
         view.schema = name_;
         view.fullName = info_.name + "." + name_ + "." + viewName;
-
-        const std::string columnsQuery = std::format("DESCRIBE {}", quoteIdent(viewName));
-        if (mysql_query(conn_, columnsQuery.c_str()) == 0) {
-            MysqlResPtr res(mysql_store_result(conn_));
-            if (res) {
-                MYSQL_ROW row;
-                while ((row = mysql_fetch_row(res.get())) != nullptr) {
-                    Column col;
-                    col.name = row[0] ? row[0] : "";
-                    col.type = row[1] ? row[1] : "";
-                    col.isNotNull = row[2] && std::string(row[2]) == "NO";
-                    view.columns.push_back(std::move(col));
-                }
-            }
+        if (auto it = columns.find(viewName); it != columns.end()) {
+            for (auto& c : it->second)
+                view.columns.push_back({.name = std::move(c.name),
+                                        .type = std::move(c.type),
+                                        .isNotNull = c.isNotNull});
         }
-        drainExtraResults(conn_);
-
         result.push_back(std::move(view));
     }
 
