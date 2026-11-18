@@ -292,8 +292,19 @@ PostgresDatabase::~PostgresDatabase() {
 }
 
 void PostgresDatabase::ensureConn() {
-    if (conn_)
-        return;
+    if (conn_) {
+        if (PQstatus(conn_) == CONNECTION_OK)
+            return;
+        // the server dropped the session (idle timeout, restart): open a new one
+        {
+            std::lock_guard lock(cancelMu_);
+            if (cancel_)
+                PQfreeCancel(cancel_);
+            cancel_ = nullptr;
+        }
+        PQfinish(conn_);
+        conn_ = nullptr;
+    }
     const auto connStr = info_.buildConnectionString(name_);
     PGconn* conn = PQconnectdb(connStr.c_str());
     if (PQstatus(conn) != CONNECTION_OK) {
