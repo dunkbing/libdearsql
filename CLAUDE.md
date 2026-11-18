@@ -133,7 +133,7 @@ each defines `DEARSQL_HAS_<NAME>`, and `factory.cpp` returns null for the rest).
 through the same helper. MongoDB is on the C driver (libmongoc/libbson); its documents print as legacy extended
 JSON, which the app and its tests match exactly. All backends are implemented, DuckDB included (`src/duckdb_connection.cpp`, built
 when CMake finds DuckDB; `.csv` paths open as a read-only view over the file, and
-`csvMatchingRows()` filters a CSV with a SQL condition for hosts that edit it). `.xlsx`/`.xlsm` paths (`isXlsxPath`) open on the SQLite backend: `src/xlsx_workbook.cpp` (OpenXLSX, `DEARSQL_HAS_XLSX`) loads every sheet into a `file:dearsql_xlsx_<n>?mode=memory&cache=shared` database, which `openDatabase()` handles reopen while the connection's own handle keeps it alive, all `query_only`. Its tests live in the app (`tests/database/xlsx_test.cpp`), which writes the workbooks. Every server
+`csvMatchingRows()` filters a CSV with a SQL condition for hosts that edit it). `.xlsx` paths (`isXlsxPath`) open on the SQLite backend: `src/xlsx_workbook.cpp` (OpenXLSX, `DEARSQL_HAS_XLSX`) loads every sheet into a `file:dearsql_xlsx_<n>?mode=memory&cache=shared` database, which `openDatabase()` handles reopen while the connection's own handle keeps it alive, all `query_only`. Its tests live in the app (`tests/database/xlsx_test.cpp`), which writes the workbooks. Every server
 backend has `openDatabase()`, `cancel()` and `alive()` (cancel is a no-op on MongoDB,
 Redis and Cassandra; README "Status" lists the mechanism per backend — never drive
 the busy handle from the cancelling thread); Postgres/MSSQL have a cheap

@@ -171,7 +171,7 @@ bool isCsvPath(const std::string& path) {
 bool isXlsxPath(const std::string& path) {
     std::string ext = std::filesystem::path(path).extension().string();
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return std::tolower(c); });
-    return ext == ".xlsx" || ext == ".xlsm";
+    return ext == ".xlsx";
 }
 
 std::string ConnectionInfo::buildConnectionString(const std::string& dbName) const {

@@ -16,10 +16,10 @@ namespace dearsql::xlsx {
 
 namespace {
 
-    // shortcut: OpenXLSX parses a sheet whole (roughly 50x the file size in memory);
-    // past this a workbook is refused rather than exhausting memory. raise it, or stream
-    // the sheet xml, once real workbooks need more
-    constexpr std::uintmax_t kMaxFileBytes = 100ull * 1024 * 1024;
+    // shortcut: OpenXLSX holds the sheet as a dom and is slow per cell: measured 7.5 s and
+    // 1.1 GB for a 9.8 MB file (200k x 10). past 20 MB a workbook is refused; stream the sheet
+    // xml (pugixml over miniz) instead once real workbooks need more
+    constexpr std::uintmax_t kMaxFileBytes = 20ull * 1024 * 1024;
 
     // a cell as read: nothing, a number (date when its format says so), text or a boolean
     struct Date {
@@ -67,7 +67,9 @@ namespace {
         y = static_cast<int>(yoe + era * 400 + (m <= 2));
     }
 
-    // excel serial (1900 system) to "yyyy-mm-dd" or "yyyy-mm-dd hh:mm:ss"
+    // excel serial to "yyyy-mm-dd" or "yyyy-mm-dd hh:mm:ss".
+    // shortcut: assumes the 1900 date system; a workbook saved with date1904 (old mac excel)
+    // reads 4 years early. read workbookPr/@date1904 when such files turn up
     std::string isoDate(double serial) {
         // serial 0 is 1899-12-30, which is 25569 days before 1970-01-01
         long long days = static_cast<long long>(std::floor(serial));
