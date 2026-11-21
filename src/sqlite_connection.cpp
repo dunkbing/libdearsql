@@ -215,6 +215,28 @@ Table SQLiteDatabaseNode::load(const std::string& tn, bool isView) {
     if (isView)
         return t;
 
+    // a workbook sheet (xlsx_workbook.cpp) carries notes as /* */ after the table name and
+    // after each column's type in its CREATE TABLE, which sqlite keeps as written
+    std::string literal = "'";
+    for (const char ch : tn)
+        literal += ch == '\'' ? std::string("''") : std::string(1, ch);
+    std::string ddl;
+    queryRows(db, "SELECT sql FROM sqlite_master WHERE type='table' AND name=" + literal + "'",
+              [&](sqlite3_stmt* stmt) { ddl = columnText(stmt, 0); });
+    if (ddl.find("/* ") != std::string::npos) {
+        const auto noteAfter = [&](const std::string& prefix) -> std::string {
+            const auto at = ddl.find(prefix + " /* ");
+            if (at == std::string::npos)
+                return {};
+            const auto start = at + prefix.size() + 4;
+            const auto end = ddl.find(" */", start);
+            return end == std::string::npos ? std::string() : ddl.substr(start, end - start);
+        };
+        t.comment = noteAfter("CREATE TABLE " + q);
+        for (auto& c : t.columns)
+            c.comment = noteAfter(quoteIdent(c.name) + " " + c.type);
+    }
+
     // sqlite keys have no names: one per constraint id, after its first column, so a
     // composite key stays one key
     std::map<int, std::string> fkNames;

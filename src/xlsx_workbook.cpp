@@ -25,7 +25,11 @@ namespace {
     struct Date {
         double serial;
     };
-    using Cell = std::variant<std::monostate, int64_t, double, Date, bool, std::string>;
+    // an error value ("#N/A", "#DIV/0!"): text where the column is text, NULL anywhere else
+    struct ErrorText {
+        std::string text;
+    };
+    using Cell = std::variant<std::monostate, int64_t, double, Date, bool, std::string, ErrorText>;
 
     // excel's built-in date and time formats
     bool builtinDateFormat(uint32_t id) {
@@ -106,6 +110,7 @@ namespace {
         std::string name;
         std::vector<std::vector<Cell>> rows; // dense: missing cells are monostate
         size_t width = 0;
+        std::map<size_t, std::pair<uint32_t, std::string>> formulas; // column -> its first (row, formula)
     };
 
     Sheet readSheet(OpenXLSX::XLDocument& doc, const std::string& name,
@@ -135,6 +140,8 @@ namespace {
             auto& out = sheet.rows.emplace_back();
             for (auto& cell : row.cells()) {
                 const uint16_t col = cell.cellReference().column();
+                if (cell.hasFormula())
+                    sheet.formulas.try_emplace(col - 1, row.rowNumber(), cell.formula().get());
                 OpenXLSX::XLCellValue v = cell.value();
                 Cell c;
                 switch (v.type()) {
@@ -157,7 +164,7 @@ namespace {
                     c = v.get<std::string>();
                     break;
                 case OpenXLSX::XLValueType::Error:
-                    c = v.getString(); // "#DIV/0!" and friends, as excel shows them
+                    c = ErrorText{v.getString()}; // "#DIV/0!" and friends, as excel shows them
                     break;
                 default:
                     continue;
@@ -234,6 +241,8 @@ namespace {
             return isoDate(d->serial);
         if (const auto* b = std::get_if<bool>(&c))
             return *b ? "TRUE" : "FALSE";
+        if (const auto* e = std::get_if<ErrorText>(&c))
+            return e->text;
         return "";
     }
 
@@ -246,20 +255,80 @@ namespace {
         }
     }
 
+    bool isEmpty(const Cell& c) {
+        return std::holds_alternative<std::monostate>(c);
+    }
+
+    // a header row: two or more non-empty text cells and nothing else (one, on a one-column
+    // sheet), covering at least half the columns the rows below it use
+    bool looksLikeHeader(const Sheet& sheet, size_t r, size_t from, size_t to) {
+        size_t texts = 0;
+        for (size_t c = from; c < to && c < sheet.rows[r].size(); ++c) {
+            const Cell& cell = sheet.rows[r][c];
+            if (isEmpty(cell))
+                continue;
+            const auto* s = std::get_if<std::string>(&cell);
+            if (!s || s->empty())
+                return false;
+            ++texts;
+        }
+        if (texts < std::min<size_t>(2, to - from))
+            return false;
+        std::set<size_t> used;
+        for (size_t below = r + 1; below < sheet.rows.size() && below <= r + 50; ++below)
+            for (size_t c = from; c < to && c < sheet.rows[below].size(); ++c)
+                if (!isEmpty(sheet.rows[below][c]))
+                    used.insert(c);
+        return !used.empty() && texts * 2 >= used.size();
+    }
+
+    // the table's notes go into its CREATE TABLE as /* */ comments, which sqlite keeps
+    // verbatim; the sqlite backend reads them back as Table::comment and Column::comment
+    std::string note(std::string text) {
+        for (size_t at; (at = text.find("*/")) != std::string::npos;)
+            text.replace(at, 2, "* /");
+        return " /* " + text + " */";
+    }
+
     void loadSheet(sqlite3* db, const Sheet& sheet) {
-        const size_t width = std::max<size_t>(sheet.width, 1);
-        // a first row of distinct-enough text is the header; anything else is data
-        size_t first = 0;
+        // the used columns: empty ones on the left (a margin) are left out
+        size_t from = sheet.width, to = 0;
+        for (const auto& row : sheet.rows)
+            for (size_t c = 0; c < row.size(); ++c)
+                if (!isEmpty(row[c])) {
+                    from = std::min(from, c);
+                    to = std::max(to, c + 1);
+                }
+        if (from >= to)
+            from = 0, to = 1; // an empty sheet: one column, no rows
+
+        // the header is the first header-like row among the first 20 that hold anything;
+        // rows above it (a title, notes) are left out and quoted in the table's note
+        const auto blank = [&](size_t r) {
+            return std::ranges::all_of(sheet.rows[r], [](const Cell& c) { return isEmpty(c); });
+        };
+        std::optional<size_t> header;
+        size_t firstUsed = sheet.rows.size();
+        for (size_t r = 0, seen = 0; r < sheet.rows.size() && seen < 20; ++r) {
+            if (blank(r))
+                continue;
+            firstUsed = std::min(firstUsed, r);
+            ++seen;
+            if (looksLikeHeader(sheet, r, from, to)) {
+                header = r;
+                break;
+            }
+        }
+        const size_t first = header ? *header + 1 : firstUsed;
+        const size_t width = to - from;
+
         std::vector<std::string> names;
-        const bool header = !sheet.rows.empty() && sheet.rows[0].size() == sheet.width &&
-                            std::ranges::all_of(sheet.rows[0], [](const Cell& c) {
-                                const auto* s = std::get_if<std::string>(&c);
-                                return s && !s->empty();
-                            });
         std::set<std::string> taken;
-        for (size_t c = 0; c < width; ++c) {
-            std::string name = header ? std::get<std::string>(sheet.rows[0][c])
-                                      : columnLetters(static_cast<uint32_t>(c + 1));
+        for (size_t c = from; c < to; ++c) {
+            const std::string letter = columnLetters(static_cast<uint32_t>(c + 1));
+            const Cell* h = header && c < sheet.rows[*header].size() ? &sheet.rows[*header][c] : nullptr;
+            const auto* text = h ? std::get_if<std::string>(h) : nullptr;
+            std::string name = text && !text->empty() ? *text : letter;
             std::string lowered = name;
             std::ranges::transform(lowered, lowered.begin(), ::tolower);
             for (int n = 2; taken.contains(lowered); ++n) {
@@ -271,18 +340,57 @@ namespace {
             taken.insert(lowered);
             names.push_back(name);
         }
-        if (header)
-            first = 1;
+
+        // data rows: from below the header, blank rows left out
+        std::vector<size_t> data;
+        for (size_t r = first; r < sheet.rows.size(); ++r)
+            if (!blank(r))
+                data.push_back(r);
 
         std::vector<Kind> kinds(width, Kind::Empty);
-        for (size_t r = first; r < sheet.rows.size(); ++r)
-            for (size_t c = 0; c < sheet.rows[r].size(); ++c)
-                kinds[c] = merge(kinds[c], kindOf(sheet.rows[r][c]));
+        std::vector<size_t> errors(width, 0);
+        for (const size_t r : data)
+            for (size_t c = from; c < to && c < sheet.rows[r].size(); ++c) {
+                kinds[c - from] = merge(kinds[c - from], kindOf(sheet.rows[r][c]));
+                errors[c - from] += std::holds_alternative<ErrorText>(sheet.rows[r][c]);
+            }
+        for (size_t c = 0; c < width; ++c)
+            if (kinds[c] == Kind::Empty && errors[c])
+                kinds[c] = Kind::Text; // only errors: keep them as text
 
-        std::string create = "CREATE TABLE " + quoteIdent(sheet.name) + " (";
+        std::string tableNote = "Excel sheet";
+        if (header)
+            tableNote += std::format(", header row {}", *header + 1);
+        else
+            tableNote += ", no header row found: columns are named by their letter";
+        if (!data.empty())
+            tableNote += std::format(", data rows {}-{}", data.front() + 1, data.back() + 1);
+        tableNote += std::format(", columns {}-{}", columnLetters(static_cast<uint32_t>(from + 1)),
+                                 columnLetters(static_cast<uint32_t>(to)));
+        if (header && *header > firstUsed) {
+            std::string above;
+            for (size_t r = firstUsed; r < *header; ++r)
+                for (const Cell& c : sheet.rows[r])
+                    if (!isEmpty(c))
+                        above += (above.empty() ? "" : " | ") + textOf(c);
+            if (above.size() > 200)
+                above = above.substr(0, 200) + "...";
+            tableNote += std::format("; above the header: {}", above);
+        }
+
+        std::string create = "CREATE TABLE " + quoteIdent(sheet.name) + note(tableNote) + " (";
         std::string insert = "INSERT INTO " + quoteIdent(sheet.name) + " VALUES (";
         for (size_t c = 0; c < width; ++c) {
-            create += (c ? ", " : "") + quoteIdent(names[c]) + " " + sqlType(kinds[c]);
+            std::string colNote = "column " + columnLetters(static_cast<uint32_t>(from + c + 1));
+            if (const auto f = sheet.formulas.find(from + c);
+                f != sheet.formulas.end() && f->second.first > first)
+                colNote += std::format(", a formula (={} in {}{}): values as Excel last calculated them",
+                                       f->second.second, columnLetters(static_cast<uint32_t>(from + c + 1)),
+                                       f->second.first);
+            if (errors[c] && kinds[c] != Kind::Text)
+                colNote += std::format(", {} error cell{} (#N/A and the like) read as NULL",
+                                       errors[c], errors[c] == 1 ? "" : "s");
+            create += (c ? ", " : "") + quoteIdent(names[c]) + " " + sqlType(kinds[c]) + note(colNote);
             insert += c ? ", ?" : "?";
         }
         exec(db, create + ")");
@@ -291,14 +399,15 @@ namespace {
         if (sqlite3_prepare_v2(db, (insert + ")").c_str(), -1, &stmt, nullptr) != SQLITE_OK)
             throw std::runtime_error(sqlite3_errmsg(db));
         std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> guard(stmt, sqlite3_finalize);
-        for (size_t r = first; r < sheet.rows.size(); ++r) {
+        const Cell empty;
+        for (const size_t r : data) {
             const auto& row = sheet.rows[r];
             for (size_t c = 0; c < width; ++c) {
                 const int i = static_cast<int>(c + 1);
-                const Cell empty;
-                const Cell& cell = c < row.size() ? row[c] : empty;
+                const Cell& cell = from + c < row.size() ? row[from + c] : empty;
                 const Kind k = kindOf(cell);
-                if (k == Kind::Empty)
+                const bool error = std::holds_alternative<ErrorText>(cell);
+                if (k == Kind::Empty && !(error && kinds[c] == Kind::Text))
                     sqlite3_bind_null(stmt, i);
                 else if (kinds[c] == Kind::Integer || kinds[c] == Kind::Boolean)
                     sqlite3_bind_int64(stmt, i,
